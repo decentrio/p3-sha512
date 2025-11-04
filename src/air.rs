@@ -3,7 +3,7 @@ use core::borrow::Borrow;
 use std::ops::Add;
 
 use p3_air::{Air, AirBuilder, BaseAir};
-use p3_field::{Algebra, Field, FieldArray, PrimeCharacteristicRing, PrimeField, PrimeField32};
+use p3_field::{Field, FieldAlgebra, FieldArray, PrimeField, PrimeField32};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::rngs::StdRng;
@@ -47,10 +47,7 @@ impl<AB: AirBuilder> Air<AB> for ShaAir {
         eval_round_flags(builder);
 
         let main = builder.main();
-        let (local, next) = (
-            main.row_slice(0).expect("The matrix is empty?"),
-            main.row_slice(1).expect("The matrix only has 1 row?"),
-        );
+        let (local, next) = (main.row_slice(0), main.row_slice(1));
         let local: &ShaCols<AB::Var> = (*local).borrow();
         let next: &ShaCols<AB::Var> = (*next).borrow();
 
@@ -60,18 +57,21 @@ impl<AB: AirBuilder> Air<AB> for ShaAir {
         let not_final_step = AB::Expr::ONE - final_step;
 
         // If this is not the first step, assert all value in input_block must be zero.
-        builder
-            .when(not_first_step.clone())
-            .assert_zeros::<64, _>(array::from_fn( |i|  { local.input_block[i].clone()}));
+
+        for i in 0..64 {
+            builder
+                .when(not_first_step.clone())
+                .assert_zero(local.input_block[i].clone());
+        }
 
         // If this is not the final step, the local seed and next prev_seed must match.
         for i in 0..NUM_ROUNDS {
-            builder
-                .when(not_final_step.clone())
-                .when_transition()
-                .assert_zeros::<U32_LIMBS, _>(array::from_fn(|limb| {
-                    local.seed[i][limb].clone() - next.prev_seed[i][limb].clone()
-                }));
+            for j in 0..U32_LIMBS {
+                builder
+                    .when(not_final_step.clone())
+                    .when_transition()
+                    .assert_zero(local.seed[i][j].clone() - next.prev_seed[i][j].clone());
+            }
         }
 
         // The export flag must be 0 or 1.
@@ -85,21 +85,27 @@ impl<AB: AirBuilder> Air<AB> for ShaAir {
         for i in 0..NUM_ROUNDS {
             if i < 16 {
                 // assert all values in buf from 0 to 16 is equal to input block little endian
-                builder.assert_bools(local.buf[i].clone());
-                builder.assert_zeros::<16, _>(array::from_fn( | j: usize | {
-                    local.buf[i][j].clone() - local.input_block[i * 4 + j].clone()
-                }))
+
+                for ele in local.buf[i] {
+                    builder.assert_bool(ele);
+                }
+
+                for j in 0..16 {
+                    builder.assert_zero(
+                        local.buf[i][j].clone() - local.input_block[i * 4 + j].clone(),
+                    );
+                }
+                
             } else {
                 // TODO: right rotate air
                 // builder.assert_zeros::<48, _>(array::from_fn( | j | {
                 //     let v1 = &local.buf[i-2].iter().enumerate().fold(AB::Expr::ZERO, |acc, (i, x)|  {
                 //         acc + x.clone().into() * AB::Expr::from_u32(1 << (i * 8))
                 //     });
-                    
+
                 // }));
             }
         }
-
     }
 }
 
@@ -109,10 +115,7 @@ pub(crate) fn eval_round_flags<AB: AirBuilder>(builder: &mut AB) {
     let main = builder.main();
 
     // Get the local (current) row and the next row slices.
-    let (local, next) = (
-        main.row_slice(0).expect("The matrix is empty?"),
-        main.row_slice(1).expect("The matrix only has 1 row?"),
-    );
+    let (local, next) = (main.row_slice(0), main.row_slice(1));
 
     // Cast slices into typed Keccak column references.
     let local: &ShaCols<AB::Var> = (*local).borrow();
@@ -125,20 +128,24 @@ pub(crate) fn eval_round_flags<AB: AirBuilder>(builder: &mut AB) {
         .when_first_row()
         .assert_one(local.step_flags[0].clone());
     // Constraint: In the first row, all other flags are 0.
-    builder
-        .when_first_row()
-        .assert_zeros::<NUM_ROUNDS_MIN_1, _>(try_clone_array(&local.step_flags[1..]));
+
+    for i in 1..NUM_ROUNDS {
+        builder
+            .when_first_row()
+            .assert_zero(local.step_flags[i].clone());
+    }
 
     // Constraint: In all transitions, flags rotate forward.
     //
     // Formally, for each flag i in the local row, it should equal the next row's flag at (i + 1) mod NUM_ROUNDS.
     //
     // This ensures that exactly one flag "moves forward" each step in a cyclic manner.
-    builder
-        .when_transition()
-        .assert_zeros::<NUM_ROUNDS, _>(array::from_fn(|i| {
-            local.step_flags[i].clone() - next.step_flags[(i + 1) % NUM_ROUNDS].clone()
-        }));
+
+    for i in 0..NUM_ROUNDS {
+        builder
+            .when_transition()
+            .assert_zero(local.step_flags[i].clone() - next.step_flags[(i + 1) % NUM_ROUNDS].clone());
+    }
 }
 
 fn try_clone_array<T: Clone, const N: usize>(slice: &[T]) -> [T; N] {

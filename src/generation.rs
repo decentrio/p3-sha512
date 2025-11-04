@@ -45,7 +45,7 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
     rows: &mut [ShaCols<F>],
     input_block: [u8; 64],
 ) {
-    rows[0].input_block = array::from_fn(|i| F::from_u8(input_block[i]));
+    rows[0].input_block = array::from_fn(|i| F::from_canonical_u8(input_block[i]));
     let mut buf = [0u32; 64];
     for i in 0..NUM_ROUNDS {
         if i < 16 {
@@ -69,14 +69,14 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
     let buf_u8: [[u8; U32_LIMBS]; 64] = array::from_fn(|i| buf[i].to_le_bytes());
 
     let prev_seed: [[u8; U32_LIMBS]; 8] = array::from_fn(|i| SHA256_H[i].to_le_bytes());
-    rows[0].prev_seed = array::from_fn(|i| array::from_fn(|j| F::from_u8(prev_seed[i][j])));
+    rows[0].prev_seed = array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(prev_seed[i][j])));
 
     for round in 0..NUM_ROUNDS {
         if round != 0 {
             rows[round].prev_seed = rows[round - 1].seed;
             rows[round].input_block = array::from_fn(|_| F::ZERO);
         }
-        rows[round].buf = array::from_fn(|i| array::from_fn(|j| F::from_u8(buf_u8[i][j])));
+        rows[round].buf = array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(buf_u8[i][j])));
 
         generate_trace_row_for_round(&mut rows[round], round);
     }
@@ -85,7 +85,7 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
         array::from_fn(|j| {
             let x_32 = limbs_into_u32(rows[NUM_ROUNDS_MIN_1].seed.map(|f| f[j].as_canonical_u32()));
             let y_32 = limbs_into_u32(rows[0].prev_seed.map(|f| f[j].as_canonical_u32()));
-            F::from_u8(x_32.wrapping_add(y_32).to_le_bytes()[i])
+            F::from_canonical_u8(x_32.wrapping_add(y_32).to_le_bytes()[i])
         })
     });
 }
@@ -123,14 +123,14 @@ pub fn generate_trace_row_for_round<F: PrimeField32>(row: &mut ShaCols<F>, round
     let t2_sum: u32 = t2.iter().fold(0, |acc, &num| acc.wrapping_add(num));
 
     let e = array::from_fn(|i| {
-        F::from_u8(
+        F::from_canonical_u8(
             limbs_into_u32(row.prev_seed[3].map(|f| f.as_canonical_u32()))
                 .wrapping_add(t1_sum)
                 .to_le_bytes()[i],
         )
     });
 
-    let a: [F; 4] = array::from_fn(|i| F::from_u8(t1_sum.wrapping_add(t2_sum).to_le_bytes()[i]));
+    let a: [F; 4] = array::from_fn(|i| F::from_canonical_u8(t1_sum.wrapping_add(t2_sum).to_le_bytes()[i]));
 
     row.seed = [
         row.prev_seed[6],
