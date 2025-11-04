@@ -1,7 +1,7 @@
 use core::borrow::Borrow;
 
 use p3_air::AirBuilder;
-use p3_field::{PrimeCharacteristicRing, PrimeField32};
+use p3_field::{FieldAlgebra, PrimeField32};
 
 use crate::constants::U32_LIMBS;
 
@@ -45,13 +45,13 @@ impl<F: PrimeField32> RightRotateAir<F> {
     }
 
     pub fn populate(&mut self, input: u32, rotation: usize) -> u32 {
-        let input_bytes = input.to_le_bytes().map(F::from_u8);
+        let input_bytes = input.to_le_bytes().map(F::from_canonical_u8);
         let expected = input.rotate_right(rotation as u32);
 
         // Compute some constants with respect to the rotation needed for the rotation.
         let nb_bytes_to_shift = Self::nb_bytes_to_shift(rotation);
         let nb_bits_to_shift = Self::nb_bits_to_shift(rotation);
-        let carry_multiplier = F::from_u32(Self::carry_multiplier(rotation));
+        let carry_multiplier = F::from_canonical_u32(Self::carry_multiplier(rotation));
 
         // Perform the byte shift.
         let input_bytes_rotated: [F; 4] = [
@@ -77,11 +77,12 @@ impl<F: PrimeField32> RightRotateAir<F> {
                     let remainder = b - (res << c_mod);
                     let carry = (b << (8 - c_mod)) >> (8 - c_mod);
                     self.c_mod_is_zero[i] = F::ZERO;
-                    self.left_aligned_carry[i] = F::from_u8(b << (8 - c_mod));
+                    self.left_aligned_carry[i] = F::from_canonical_u8(b << (8 - c_mod));
                     if ((b as u32) << (8 - c_mod)) > 255 {
-                        self.shift_overflow[i] = F::from_u8(((b as u32) << (8 - c_mod) >> 8) as u8);
+                        self.shift_overflow[i] =
+                            F::from_canonical_u8(((b as u32) << (8 - c_mod) >> 8) as u8);
                     }
-                    self.shift_remainder[i] = F::from_u8(remainder);
+                    self.shift_remainder[i] = F::from_canonical_u8(remainder);
                     (res, carry)
                 } else {
                     self.c_mod_is_zero[i] = F::ONE;
@@ -89,8 +90,8 @@ impl<F: PrimeField32> RightRotateAir<F> {
                     (b, 0u8)
                 }
             };
-            self.shift[i] = F::from_u8(shift);
-            self.carry[i] = F::from_u8(carry);
+            self.shift[i] = F::from_canonical_u8(shift);
+            self.carry[i] = F::from_canonical_u8(carry);
 
             if i == U32_LIMBS - 1 {
                 first_shift = self.shift[i];
@@ -122,7 +123,7 @@ impl<F: PrimeField32> RightRotateAir<F> {
         // Compute some constants with respect to the rotation needed for the rotation.
         let nb_bytes_to_shift = Self::nb_bytes_to_shift(rotation);
         let nb_bits_to_shift = Self::nb_bits_to_shift(rotation);
-        let carry_multiplier = AB::F::from_u32(Self::carry_multiplier(rotation));
+        let carry_multiplier = AB::F::from_canonical_u32(Self::carry_multiplier(rotation));
 
         // Perform the byte shift.
         let input_bytes_rotated = [
@@ -143,7 +144,7 @@ impl<F: PrimeField32> RightRotateAir<F> {
             // assert when c_mod is zero
             builder
                 .when(cols.c_mod_is_zero[i].clone())
-                .assert_zero(AB::F::from_u8(c_mod));
+                .assert_zero(AB::F::from_canonical_u8(c_mod));
             builder
                 .when(cols.c_mod_is_zero[i].clone())
                 .assert_eq(input_bytes_rotated[i].clone(), cols.shift[i].clone());
@@ -225,24 +226,21 @@ pub mod tests {
     use core::borrow::Borrow;
     use p3_air::{Air, AirBuilder, BaseAir};
     use p3_baby_bear::BabyBear;
-    use p3_challenger::{
-        DuplexChallenger, HashChallenger, SerializingChallenger32, SerializingChallenger64,
-    };
+    use p3_challenger::{HashChallenger, SerializingChallenger32, SerializingChallenger64};
     use p3_circle::CirclePcs;
     use p3_commit::ExtensionMmcs;
     use p3_dft::Radix2DitParallel;
-    use p3_field::{
-        Field, PrimeCharacteristicRing, PrimeField32, extension::BinomialExtensionField,
-    };
-    use p3_fri::{TwoAdicFriPcs, create_benchmark_fri_params_zk};
+    use p3_field::{Field, FieldAlgebra, PrimeField32, extension::BinomialExtensionField};
+    use p3_fri::{FriConfig, TwoAdicFriPcs};
     use p3_goldilocks::Goldilocks;
     use p3_keccak::{Keccak256Hash, KeccakF};
     use p3_matrix::{Matrix, dense::RowMajorMatrix};
     use p3_merkle_tree::MerkleTreeMmcs;
     use p3_mersenne_31::{Mersenne31, Poseidon2Mersenne31};
+    use p3_monty_31::dft::RecursiveDft;
     use p3_sha256::Sha256;
     use p3_symmetric::{
-        CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher, TruncatedPermutation,
+        CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher32, TruncatedPermutation,
     };
     use p3_uni_stark::{StarkConfig, prove, verify};
     use rand::{
@@ -250,6 +248,8 @@ pub mod tests {
         rngs::{SmallRng, StdRng},
     };
     use std::{fmt::Debug, io::Error, marker::PhantomData};
+    use tracing_forest::{ForestLayer, util::LevelFilter};
+    use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
     #[derive(Debug)]
     pub struct ExampleAir {
@@ -291,23 +291,31 @@ pub mod tests {
         #[inline]
         fn eval(&self, builder: &mut AB) {
             let main = builder.main();
-            let local = main.row_slice(0).unwrap();
+            let local = main.row_slice(0);
             let local: &RightRotateAir<AB::Var> = (*local).borrow();
-            let input = self.input.to_le_bytes().map(AB::Expr::from_u8);
+            let input = self.input.to_le_bytes().map(AB::Expr::from_canonical_u8);
             RightRotateAir::<AB::F>::eval::<AB>(builder, input, self.rotation, local);
         }
     }
 
     #[test]
-    fn test_right_rotate() -> Result<(), impl Debug> {
+    fn test_right_rotate() {
         // WARNING: Use a real cryptographic PRNG in applications!!
         let mut rng = SmallRng::seed_from_u64(1);
+        let env_filter = EnvFilter::builder()
+            .with_default_directive(LevelFilter::INFO.into())
+            .from_env_lossy();
+
+        Registry::default()
+            .with(env_filter)
+            .with(ForestLayer::default())
+            .init();
 
         type Val = BabyBear;
         type Challenge = BinomialExtensionField<Val, 4>;
 
         type ByteHash = Sha256;
-        type FieldHash = SerializingHasher<ByteHash>;
+        type FieldHash = SerializingHasher32<ByteHash>;
         let byte_hash = ByteHash {};
         let field_hash = FieldHash::new(Sha256);
 
@@ -320,27 +328,34 @@ pub mod tests {
         type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
         let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
 
-        type Dft = Radix2DitParallel<Val>;
-        let dft = Dft::default();
+        type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
 
-        type Challenger = SerializingChallenger64<Val, HashChallenger<u8, ByteHash, 32>>;
-        let challenger = Challenger::from_hasher(vec![], byte_hash);
-
-        let fri_params = create_benchmark_fri_params_zk(challenge_mmcs);
+        let fri_config = FriConfig {
+            log_blowup: 2,
+            log_final_poly_len: 0,
+            num_queries: 100,
+            proof_of_work_bits: 16,
+            mmcs: challenge_mmcs,
+        };
 
         let input: u32 = rng.random();
         let rotation: usize = rng.random_range(1..31);
 
         let air = ExampleAir { input, rotation };
-        let trace = air.generate_trace_rows(input, rotation, fri_params.log_blowup);
+        let trace = air.generate_trace_rows(input, rotation, fri_config.log_blowup);
+
+        type Dft = RecursiveDft<Val>;
+        let dft = Dft::new(trace.height() << fri_config.log_blowup);
 
         type Pcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
-        let pcs = Pcs::new(dft, val_mmcs, fri_params);
+        let pcs = Pcs::new(dft, val_mmcs, fri_config);
 
         type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
-        let config = MyConfig::new(pcs, challenger);
+        let config = MyConfig::new(pcs);
 
-        let proof = prove(&config, &air, trace, &vec![]);
-        verify(&config, &air, &proof, &vec![])
+        let mut challenger = Challenger::from_hasher(vec![], byte_hash);
+        let proof = prove(&config, &air, &mut challenger, trace, &vec![]);
+
+        verify(&config, &air, &mut challenger, &proof, &vec![]).expect("verification failed");
     }
 }
