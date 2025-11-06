@@ -314,10 +314,10 @@ pub mod tests {
         type Val = BabyBear;
         type Challenge = BinomialExtensionField<Val, 4>;
 
-        type ByteHash = Sha256;
+        type ByteHash = Keccak256Hash;
         type FieldHash = SerializingHasher32<ByteHash>;
         let byte_hash = ByteHash {};
-        let field_hash = FieldHash::new(Sha256);
+        let field_hash = FieldHash::new(Keccak256Hash);
 
         type MyCompress = CompressionFunctionFromHasher<ByteHash, 2, 32>;
         let compress = MyCompress::new(byte_hash);
@@ -356,6 +356,7 @@ pub mod tests {
         let mut challenger = Challenger::from_hasher(vec![], byte_hash);
         let proof = prove(&config, &air, &mut challenger, trace, &vec![]);
 
+        let mut challenger = Challenger::from_hasher(vec![], byte_hash);
         verify(&config, &air, &mut challenger, &proof, &vec![]).expect("verification failed");
     }
 }
