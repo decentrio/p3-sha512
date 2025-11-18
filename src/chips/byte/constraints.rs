@@ -1,8 +1,4 @@
-use std::{
-    borrow::{Borrow, BorrowMut},
-    default,
-    sync::atomic::AtomicU32,
-};
+use std::borrow::{Borrow, BorrowMut};
 
 use openvm_stark_backend::{
     interaction::InteractionBuilder,

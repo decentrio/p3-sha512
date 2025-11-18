@@ -112,7 +112,7 @@ fn test_xor() {
     let requesters = (0..NUM_REQUESTERS)
         .map(|_| ByteInteractionAir {
             bus_index: BYTE_XOR_BUS,
-            op: ByteLookupOp::Xor
+            op: ByteLookupOp::Xor,
         })
         .collect::<Vec<ByteInteractionAir>>();
 
@@ -202,7 +202,7 @@ fn test_shr_carry() {
     let requesters = (0..NUM_REQUESTERS)
         .map(|_| ByteInteractionAir {
             bus_index: BYTE_XOR_BUS,
-            op: ByteLookupOp::ShrCarry
+            op: ByteLookupOp::ShrCarry,
         })
         .collect::<Vec<ByteInteractionAir>>();
 

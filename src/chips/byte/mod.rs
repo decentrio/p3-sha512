@@ -1,11 +1,9 @@
-use std::{
-    collections::HashMap,
-    iter::Map,
+use std::
     sync::{
         Arc,
         atomic::{self, AtomicU32},
-    },
-};
+    }
+;
 
 use openvm_stark_backend::{
     Chip, ChipUsageGetter,
@@ -16,7 +14,7 @@ use openvm_stark_backend::{
 };
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
-use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use strum::EnumIter;
 
 use crate::chips::byte::{
     bus::ByteLookupBus, columns::NUM_BYTE_LOOKUP_COLS, constraints::ByteLookupAir, utils::shr_carry,
