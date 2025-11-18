@@ -1352,6 +1352,7 @@ version = "0.1.0"
 dependencies = [
  "derive",
  "derive-new",
+ "itertools 0.14.0",
  "keccak-hash",
  "openvm-stark-backend",
  "openvm-stark-sdk",
