@@ -1,9 +1,7 @@
-use std::
-    sync::{
-        Arc,
-        atomic::{self, AtomicU32},
-    }
-;
+use std::sync::{
+    Arc,
+    atomic::{self, AtomicU32},
+};
 
 use openvm_stark_backend::{
     Chip, ChipUsageGetter,
@@ -88,14 +86,13 @@ impl ByteLookupChip {
     /// Increments the count for this (x,y) pair and returns x ⊕ y
     pub fn request(&self, x: u8, y: u8, op: ByteLookupOp) -> Vec<u8> {
         let val_atomic = &self.count[x as usize][y as usize][op as usize];
+        val_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         match op {
             ByteLookupOp::Xor => {
-                val_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 vec![self.calc_xor(x, y), 0]
             }
             ByteLookupOp::ShrCarry => {
-                val_atomic.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let (shr, carry) = shr_carry(x, y);
                 vec![shr, carry]
             }
