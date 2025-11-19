@@ -1,25 +1,27 @@
 use core::borrow::Borrow;
 
+use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_air::AirBuilder;
 use p3_field::{FieldAlgebra, PrimeField32};
+use p3_sha512::chips::byte::{ByteLookupChip, ByteLookupOp};
 
 use crate::constants::U32_LIMBS;
 
 #[derive(Default, Debug, Clone, Copy)]
 #[repr(C)]
-pub struct ShiftRightAir<T> {
+pub struct ShiftRightCols<T> {
     /// The output value.
     pub value: [T; U32_LIMBS],
 
-    /// The c_mod == 0 condition of `shrcarry` on each byte of a word.
-    pub c_mod_is_zero: [T; U32_LIMBS],
+    // /// The c_mod == 0 condition of `shrcarry` on each byte of a word.
+    // pub c_mod_is_zero: [T; U32_LIMBS],
 
-    /// b << (8 - c_mod) of `shrcarry` on each byte of a word.
-    pub left_aligned_carry: [T; U32_LIMBS],
+    // /// b << (8 - c_mod) of `shrcarry` on each byte of a word.
+    // pub left_aligned_carry: [T; U32_LIMBS],
 
-    /// b - (b >> c_mod) << c_mod of `shrcarry` on each byte of a word.
-    pub shift_remainder: [T; U32_LIMBS],
-    pub shift_overflow: [T; U32_LIMBS],
+    // /// b - (b >> c_mod) << c_mod of `shrcarry` on each byte of a word.
+    // pub shift_remainder: [T; U32_LIMBS],
+    // pub shift_overflow: [T; U32_LIMBS],
 
     /// The shift output of `shrcarry` on each byte of a word.
     pub shift: [T; U32_LIMBS],
@@ -29,9 +31,9 @@ pub struct ShiftRightAir<T> {
 }
 
 
-pub const NUM_SHIFT_RIGHT_COLS: usize = size_of::<ShiftRightAir<u8>>();
+pub const NUM_SHIFT_RIGHT_COLS: usize = size_of::<ShiftRightCols<u8>>();
 
-impl<F: PrimeField32> ShiftRightAir<F> {
+impl<F: PrimeField32> ShiftRightCols<F> {
     pub const fn nb_bytes_to_shift(rotation: usize) -> usize {
         rotation / 8
     }
@@ -45,7 +47,7 @@ impl<F: PrimeField32> ShiftRightAir<F> {
         1 << (8 - nb_bits_to_shift)
     }
 
-    pub fn populate(&mut self, input: u32, rotation: usize) -> u32 {
+    pub fn populate(&mut self, lookup: &ByteLookupChip, input: u32, rotation: usize) -> u32 {
         let input_bytes = input.to_le_bytes().map(F::from_canonical_u8);
         let expected = input >> rotation;
 
@@ -68,28 +70,34 @@ impl<F: PrimeField32> ShiftRightAir<F> {
         for i in (0..U32_LIMBS).rev() {
             let b = input_bytes_rotated[i].to_string().parse::<u8>().unwrap();
             let c = nb_bits_to_shift as u8;
-            self.shift_overflow[i] = F::ZERO;
+            // self.shift_overflow[i] = F::ZERO;
 
-            let (shift, carry) = {
-                let c_mod = c & 0x7;
-                if c_mod != 0 {
-                    let res = b >> c_mod;
-                    let remainder = b - (res << c_mod);
-                    let carry = (b << (8 - c_mod)) >> (8 - c_mod);
-                    self.c_mod_is_zero[i] = F::ZERO;
-                    self.left_aligned_carry[i] = F::from_canonical_u8(b << (8 - c_mod));
-                    if ((b as u32) << (8 - c_mod)) > 255 {
-                        self.shift_overflow[i] =
-                            F::from_canonical_u8(((b as u32) << (8 - c_mod) >> 8) as u8);
-                    }
-                    self.shift_remainder[i] = F::from_canonical_u8(remainder);
-                    (res, carry)
-                } else {
-                    self.c_mod_is_zero[i] = F::ONE;
-                    self.left_aligned_carry[i] = F::ZERO;
-                    (b, 0u8)
-                }
-            };
+            // let (shift, carry) = {
+            //     let c_mod = c & 0x7;
+            //     if c_mod != 0 {
+            //         let res = b >> c_mod;
+            //         let remainder = b - (res << c_mod);
+            //         let carry = (b << (8 - c_mod)) >> (8 - c_mod);
+            //         self.c_mod_is_zero[i] = F::ZERO;
+            //         self.left_aligned_carry[i] = F::from_canonical_u8(b << (8 - c_mod));
+            //         if ((b as u32) << (8 - c_mod)) > 255 {
+            //             self.shift_overflow[i] =
+            //                 F::from_canonical_u8(((b as u32) << (8 - c_mod) >> 8) as u8);
+            //         }
+            //         self.shift_remainder[i] = F::from_canonical_u8(remainder);
+            //         (res, carry)
+            //     } else {
+            //         self.c_mod_is_zero[i] = F::ONE;
+            //         self.left_aligned_carry[i] = F::ZERO;
+            //         (b, 0u8)
+            //     }
+            // };
+
+
+            let req = lookup.request(b, c, ByteLookupOp::ShrCarry);
+            let shift = req[0];
+            let carry = req[1];
+
             self.shift[i] = F::from_canonical_u8(shift);
             self.carry[i] = F::from_canonical_u8(carry);
 
@@ -114,11 +122,12 @@ impl<F: PrimeField32> ShiftRightAir<F> {
         expected
     }
 
-    pub fn eval<AB: AirBuilder>(
+    pub fn eval<AB: InteractionBuilder>(
         builder: &mut AB,
+        lookup_bus: BusIndex,
         input: [AB::Expr; U32_LIMBS],
         rotation: usize,
-        cols: &ShiftRightAir<AB::Var>,
+        cols: &ShiftRightCols<AB::Var>,
     ) {
         // Compute some constants with respect to the rotation needed for the rotation.
         let nb_bytes_to_shift = Self::nb_bytes_to_shift(rotation);
@@ -139,58 +148,70 @@ impl<F: PrimeField32> ShiftRightAir<F> {
         let mut first_shift = AB::Expr::ZERO;
         let mut last_carry = AB::Expr::ZERO;
         for i in (0..U32_LIMBS).rev() {
-            let c_mod = (nb_bits_to_shift & 0x07) as u8;
+            let b = input_bytes_rotated[i].clone();
+            let c = nb_bits_to_shift as u8;
+            let mut interaction_data: Vec<AB::Expr> = Vec::new();
 
-            let c_mod_not_zero = AB::Expr::ONE - cols.c_mod_is_zero[i].clone();
-            // assert when c_mod is zero
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_zero(AB::F::from_canonical_u8(c_mod));
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_eq(input_bytes_rotated[i].clone(), cols.shift[i].clone());
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_zero(cols.carry[i].clone());
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_zero(cols.left_aligned_carry[i].clone());
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_zero(cols.shift_overflow[i].clone());
+            interaction_data.push(b);
+            interaction_data.push(AB::Expr::from_canonical_u8(c));
+            interaction_data.push(AB::Expr::from_canonical_u8(ByteLookupOp::ShrCarry as u8));
+            interaction_data.push(cols.shift[i].into());
+            interaction_data.push(cols.carry[i].into());
 
-            // assert when c_mod is not zero
-            let left_shift_amount = 8 - c_mod;
-            builder.when(c_mod_not_zero.clone()).assert_eq(
-                input_bytes_rotated[i].clone(),
-                cols.shift[i].clone().into().mul_2exp_u64(c_mod as u64)
-                    + cols.shift_remainder[i].clone(),
-            );
-            builder.when(c_mod_not_zero.clone()).assert_eq(
-                cols.left_aligned_carry[i].clone()
-                    + cols.shift_overflow[i].clone().into().mul_2exp_u64(8),
-                input_bytes_rotated[i]
-                    .clone()
-                    .mul_2exp_u64(left_shift_amount as u64),
-            );
-            builder.when(c_mod_not_zero).assert_eq(
-                cols.carry[i]
-                    .clone()
-                    .into()
-                    .mul_2exp_u64(left_shift_amount as u64),
-                cols.left_aligned_carry[i].clone(),
-            );
+            builder.push_interaction(lookup_bus, interaction_data, AB::Expr::ONE, 1);
 
-            // assert when c_mod is zero
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_eq(cols.shift[i].clone(), input_bytes_rotated[i].clone());
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_zero(cols.carry[i].clone());
-            builder
-                .when(cols.c_mod_is_zero[i].clone())
-                .assert_zero(cols.left_aligned_carry[i].clone());
+            // let c_mod = (nb_bits_to_shift & 0x07) as u8;
+
+            // let c_mod_not_zero = AB::Expr::ONE - cols.c_mod_is_zero[i].clone();
+            // // assert when c_mod is zero
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_zero(AB::F::from_canonical_u8(c_mod));
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_eq(input_bytes_rotated[i].clone(), cols.shift[i].clone());
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_zero(cols.carry[i].clone());
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_zero(cols.left_aligned_carry[i].clone());
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_zero(cols.shift_overflow[i].clone());
+
+            // // assert when c_mod is not zero
+            // let left_shift_amount = 8 - c_mod;
+            // builder.when(c_mod_not_zero.clone()).assert_eq(
+            //     input_bytes_rotated[i].clone(),
+            //     cols.shift[i].clone().into().mul_2exp_u64(c_mod as u64)
+            //         + cols.shift_remainder[i].clone(),
+            // );
+            // builder.when(c_mod_not_zero.clone()).assert_eq(
+            //     cols.left_aligned_carry[i].clone()
+            //         + cols.shift_overflow[i].clone().into().mul_2exp_u64(8),
+            //     input_bytes_rotated[i]
+            //         .clone()
+            //         .mul_2exp_u64(left_shift_amount as u64),
+            // );
+            // builder.when(c_mod_not_zero).assert_eq(
+            //     cols.carry[i]
+            //         .clone()
+            //         .into()
+            //         .mul_2exp_u64(left_shift_amount as u64),
+            //     cols.left_aligned_carry[i].clone(),
+            // );
+
+            // // assert when c_mod is zero
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_eq(cols.shift[i].clone(), input_bytes_rotated[i].clone());
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_zero(cols.carry[i].clone());
+            // builder
+            //     .when(cols.c_mod_is_zero[i].clone())
+            //     .assert_zero(cols.left_aligned_carry[i].clone());
             if i == U32_LIMBS - 1 {
                 first_shift = cols.shift[i].clone().into();
             } else {
@@ -211,10 +232,10 @@ impl<F: PrimeField32> ShiftRightAir<F> {
     }
 }
 
-impl<F> Borrow<ShiftRightAir<F>> for [F] {
-    fn borrow(&self) -> &ShiftRightAir<F> {
+impl<F> Borrow<ShiftRightCols<F>> for [F] {
+    fn borrow(&self) -> &ShiftRightCols<F> {
         debug_assert_eq!(self.len(), NUM_SHIFT_RIGHT_COLS);
-        let (prefix, shorts, suffix) = unsafe { self.align_to::<ShiftRightAir<F>>() };
+        let (prefix, shorts, suffix) = unsafe { self.align_to::<ShiftRightCols<F>>() };
         debug_assert!(prefix.is_empty(), "Alignment should match");
         debug_assert!(suffix.is_empty(), "Alignment should match");
         debug_assert_eq!(shorts.len(), 1);
