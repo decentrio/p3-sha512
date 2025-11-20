@@ -14,15 +14,6 @@ pub struct ShiftRightCols<T> {
     /// The output value.
     pub value: [T; U32_LIMBS],
 
-    // /// The c_mod == 0 condition of `shrcarry` on each byte of a word.
-    // pub c_mod_is_zero: [T; U32_LIMBS],
-
-    // /// b << (8 - c_mod) of `shrcarry` on each byte of a word.
-    // pub left_aligned_carry: [T; U32_LIMBS],
-
-    // /// b - (b >> c_mod) << c_mod of `shrcarry` on each byte of a word.
-    // pub shift_remainder: [T; U32_LIMBS],
-    // pub shift_overflow: [T; U32_LIMBS],
     /// The shift output of `shrcarry` on each byte of a word.
     pub shift: [T; U32_LIMBS],
 
