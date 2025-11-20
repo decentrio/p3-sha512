@@ -36,10 +36,53 @@ openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", re
 # openvm-cuda-common = { git = "https://github.com/openvm-org/stark-backend.git", rev = "dde6cdaf105cc57d1609fd49568c7bce0a066cc2", default-features = false }
 # openvm-cuda-backend =  { git = "https://github.com/openvm-org/stark-backend.git", rev = "dde6cdaf105cc57d1609fd49568c7bce0a066cc2", default-features = false }
 
+derive = { path = "crates/derive" }
+
+
 tracing-subscriber = { version = "0.3.17", features = ["std", "env-filter"] }
 tracing-forest = { version = "0.1.6", features = ["ansi", "smallvec"] }
 
 
 sha2 = "0.10.9"
 keccak-hash = "0.12"
-rand = { version = "0.9.0", features = ["small_rng"] }
+rand = { version = "0.8.5", features = ["small_rng"] }
+
+
+derive-new = "0.7.0"
+strum = { version = "0.27.2", features = ["derive", "strum_macros"] }
+itertools = "0.14.0"
+
+# Fastest runtime configuration
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "line-tables-only"
+strip = true
+panic = "unwind"
+codegen-units = 16
+
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = false
+
+# Make sure debug symbols are in the bench profile for flamegraphs
+[profile.bench]
+inherits = "profiling"
+
+# This will compile slowly
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
+
+# For O1 optimization but still fast(ish) compile times
+[profile.fast]
+inherits = "dev"
+debug-assertions = true
+# better recompile times
+incremental = true
+lto = "thin"
