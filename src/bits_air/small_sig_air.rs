@@ -1,16 +1,23 @@
 use std::{array, borrow::Borrow};
 
-use openvm_stark_backend::{interaction::InteractionBuilder, rap::{BaseAirWithPublicValues, PartitionedBaseAir}};
+use derive::AlignedBorrow;
+use openvm_stark_backend::{
+    interaction::InteractionBuilder,
+    rap::{BaseAirWithPublicValues, PartitionedBaseAir},
+};
 use p3_air::{Air, BaseAir};
 use p3_field::PrimeField32;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use p3_sha512::chips::byte::ByteLookupChip;
 
-use crate::{bits_air::{rotr_air::RightRotateCols, sr_air::ShiftRightCols, xor_air::Xor3Cols}, constants::U32_LIMBS};
+use crate::{
+    bits_air::{rotr_air::RightRotateCols, sr_air::ShiftRightCols, xor_air::Xor3Cols},
+    constants::U32_LIMBS,
+};
 
 const BUS_INDEX: u16 = 10;
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
 pub struct SmallSigmaCols<T> {
     pub input: [T; U32_LIMBS],
@@ -21,20 +28,8 @@ pub struct SmallSigmaCols<T> {
 
 pub const NUM_SMALL_SIGMA_COLS: usize = size_of::<SmallSigmaCols<u8>>();
 
-impl<F> Borrow<SmallSigmaCols<F>> for [F] {
-    fn borrow(&self) -> &SmallSigmaCols<F> {
-        debug_assert_eq!(self.len(), NUM_SMALL_SIGMA_COLS);
-        let (prefix, shorts, suffix) = unsafe { self.align_to::<SmallSigmaCols<F>>() };
-        debug_assert!(prefix.is_empty(), "Alignment should match");
-        debug_assert!(suffix.is_empty(), "Alignment should match");
-        debug_assert_eq!(shorts.len(), 1);
-        &shorts[0]
-    }
-}
-
 #[derive(Debug)]
-pub struct SmallSigma0Air {
-}
+pub struct SmallSigma0Air {}
 
 impl SmallSigma0Air {
     pub fn generate_trace_rows<F: PrimeField32>(
@@ -75,10 +70,29 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma0Air {
         let local = main.row_slice(0);
         let local: &SmallSigmaCols<AB::Var> = (*local).borrow();
 
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 7, &local.rrots[0]);
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 18, &local.rrots[1]);
+        RightRotateCols::<AB::F>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            local.input.clone(),
+            7,
+            &local.rrots[0],
+        );
+        RightRotateCols::<AB::F>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            local.input.clone(),
+            18,
+            &local.rrots[1],
+        );
         ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, local.input.clone(), 3, &local.sr);
-        Xor3Cols::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.sr.value, &local.xor3);
+        Xor3Cols::<AB::F>::eval(
+            builder,
+            BUS_INDEX,
+            local.rrots[0].value,
+            local.rrots[1].value,
+            local.sr.value,
+            &local.xor3,
+        );
     }
 }
 
@@ -88,7 +102,7 @@ fn generate_sig0_trace_rows<F: PrimeField32>(
     input: u32,
 ) {
     let input_bytes = input.to_le_bytes();
-    row.input = array::from_fn(| i | F::from_canonical_u8(input_bytes[i]));
+    row.input = array::from_fn(|i| F::from_canonical_u8(input_bytes[i]));
 
     let x = row.rrots[0].populate(byte_lookup, input, 7);
     let y = row.rrots[1].populate(byte_lookup, input, 18);
@@ -122,7 +136,6 @@ impl SmallSigma1Air {
     }
 }
 
-
 impl<F> BaseAir<F> for SmallSigma1Air {
     fn width(&self) -> usize {
         NUM_SMALL_SIGMA_COLS
@@ -140,10 +153,29 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma1Air {
         let local = main.row_slice(0);
         let local: &SmallSigmaCols<AB::Var> = (*local).borrow();
 
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 7, &local.rrots[0]);
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 18, &local.rrots[1]);
+        RightRotateCols::<AB::F>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            local.input.clone(),
+            7,
+            &local.rrots[0],
+        );
+        RightRotateCols::<AB::F>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            local.input.clone(),
+            18,
+            &local.rrots[1],
+        );
         ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, local.input.clone(), 3, &local.sr);
-        Xor3Cols::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.sr.value, &local.xor3);
+        Xor3Cols::<AB::F>::eval(
+            builder,
+            BUS_INDEX,
+            local.rrots[0].value,
+            local.rrots[1].value,
+            local.sr.value,
+            &local.xor3,
+        );
     }
 }
 
@@ -153,7 +185,7 @@ fn generate_sig1_trace_rows<F: PrimeField32>(
     input: u32,
 ) {
     let input_bytes = input.to_le_bytes();
-    row.input = array::from_fn(| i | F::from_canonical_u8(input_bytes[i]));
+    row.input = array::from_fn(|i| F::from_canonical_u8(input_bytes[i]));
 
     let x = row.rrots[0].populate(byte_lookup, input, 17);
     let y = row.rrots[1].populate(byte_lookup, input, 19);
@@ -165,8 +197,15 @@ fn generate_sig1_trace_rows<F: PrimeField32>(
 pub mod tests {
     use std::sync::Arc;
 
-    use openvm_stark_backend::{AirRef, prover::types::{AirProvingContext, ProvingContext}};
-    use openvm_stark_sdk::{config::{FriParameters, baby_bear_keccak::BabyBearKeccakEngine, setup_tracing}, engine::{StarkEngine, StarkFriEngine}, utils::create_seeded_rng};
+    use openvm_stark_backend::{
+        AirRef,
+        prover::types::{AirProvingContext, ProvingContext},
+    };
+    use openvm_stark_sdk::{
+        config::{FriParameters, baby_bear_keccak::BabyBearKeccakEngine, setup_tracing},
+        engine::{StarkEngine, StarkFriEngine},
+        utils::create_seeded_rng,
+    };
     use p3_sha512::chips::byte::ByteLookupChip;
     use rand::Rng;
 
@@ -175,7 +214,6 @@ pub mod tests {
 
     #[test]
     fn test_small_sig() {
-        
         setup_tracing();
 
         let mut rng = create_seeded_rng();
@@ -183,8 +221,8 @@ pub mod tests {
         let byte_chip = ByteLookupChip::new(BUS_INDEX);
 
         let input: u32 = rng.r#gen();
-        
-        let air = SmallSigma0Air{};
+
+        let air = SmallSigma0Air {};
         let trace = air.generate_trace_rows(&byte_chip, input, LOG_BLOWUP);
 
         let byte_trace = byte_chip.generate_trace();

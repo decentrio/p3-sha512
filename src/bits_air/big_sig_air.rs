@@ -1,5 +1,6 @@
 use std::{array, borrow::Borrow};
 
+use derive::AlignedBorrow;
 use openvm_stark_backend::{interaction::InteractionBuilder, rap::{BaseAirWithPublicValues, PartitionedBaseAir}};
 use p3_air::{Air, BaseAir};
 use p3_field::PrimeField32;
@@ -10,7 +11,7 @@ use crate::{bits_air::{rotr_air::RightRotateCols, xor_air::Xor3Cols}, constants:
 
 const BUS_INDEX: u16 = 10;
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
 pub struct BigSigmaCols<T> {
     pub input: [T; U32_LIMBS],
@@ -19,17 +20,6 @@ pub struct BigSigmaCols<T> {
 }
 
 pub const NUM_BIG_SIGMA_COLS: usize = size_of::<BigSigmaCols<u8>>();
-
-impl<F> Borrow<BigSigmaCols<F>> for [F] {
-    fn borrow(&self) -> &BigSigmaCols<F> {
-        debug_assert_eq!(self.len(), NUM_BIG_SIGMA_COLS);
-        let (prefix, shorts, suffix) = unsafe { self.align_to::<BigSigmaCols<F>>() };
-        debug_assert!(prefix.is_empty(), "Alignment should match");
-        debug_assert!(suffix.is_empty(), "Alignment should match");
-        debug_assert_eq!(shorts.len(), 1);
-        &shorts[0]
-    }
-}
 
 
 #[derive(Debug)]

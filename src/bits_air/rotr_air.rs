@@ -1,5 +1,6 @@
 use core::borrow::Borrow;
 
+use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_air::AirBuilder;
 use p3_field::{FieldAlgebra, PrimeField32};
@@ -7,7 +8,7 @@ use p3_sha512::chips::byte::{ByteLookupChip, ByteLookupOp, utils::shr_carry};
 
 use crate::constants::U32_LIMBS;
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
 pub struct RightRotateCols<T> {
     /// The output value.
@@ -135,10 +136,26 @@ impl<F: PrimeField32> RightRotateCols<F> {
         // Perform the byte shift.
         let mut input_iter = input.into_iter();
         let input_bytes_rotated = [
-            input_iter.nth(nb_bytes_to_shift % U32_LIMBS).unwrap().into().clone(),
-            input_iter.nth((1 + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone(),
-            input_iter.nth((2 + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone(),
-            input_iter.nth((3 + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone(),
+            input_iter
+                .nth(nb_bytes_to_shift % U32_LIMBS)
+                .unwrap()
+                .into()
+                .clone(),
+            input_iter
+                .nth((1 + nb_bytes_to_shift) % U32_LIMBS)
+                .unwrap()
+                .into()
+                .clone(),
+            input_iter
+                .nth((2 + nb_bytes_to_shift) % U32_LIMBS)
+                .unwrap()
+                .into()
+                .clone(),
+            input_iter
+                .nth((3 + nb_bytes_to_shift) % U32_LIMBS)
+                .unwrap()
+                .into()
+                .clone(),
         ];
 
         // For each byte, calculate the shift and carry. If it's not the first byte, calculate the
@@ -229,17 +246,6 @@ impl<F: PrimeField32> RightRotateCols<F> {
             cols.value[U32_LIMBS - 1].clone(),
             first_shift + last_carry * carry_multiplier,
         );
-    }
-}
-
-impl<F> Borrow<RightRotateCols<F>> for [F] {
-    fn borrow(&self) -> &RightRotateCols<F> {
-        debug_assert_eq!(self.len(), NUM_RIGHT_ROTATE_COLS);
-        let (prefix, shorts, suffix) = unsafe { self.align_to::<RightRotateCols<F>>() };
-        debug_assert!(prefix.is_empty(), "Alignment should match");
-        debug_assert!(suffix.is_empty(), "Alignment should match");
-        debug_assert_eq!(shorts.len(), 1);
-        &shorts[0]
     }
 }
 

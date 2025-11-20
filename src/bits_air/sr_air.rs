@@ -1,5 +1,6 @@
 use core::borrow::Borrow;
 
+use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_air::AirBuilder;
 use p3_field::{FieldAlgebra, PrimeField32};
@@ -7,7 +8,7 @@ use p3_sha512::chips::byte::{ByteLookupChip, ByteLookupOp};
 
 use crate::constants::U32_LIMBS;
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
 pub struct ShiftRightCols<T> {
     /// The output value.
@@ -22,14 +23,12 @@ pub struct ShiftRightCols<T> {
     // /// b - (b >> c_mod) << c_mod of `shrcarry` on each byte of a word.
     // pub shift_remainder: [T; U32_LIMBS],
     // pub shift_overflow: [T; U32_LIMBS],
-
     /// The shift output of `shrcarry` on each byte of a word.
     pub shift: [T; U32_LIMBS],
 
     /// The carry ouytput of `shrcarry` on each byte of a word.
     pub carry: [T; U32_LIMBS],
 }
-
 
 pub const NUM_SHIFT_RIGHT_COLS: usize = size_of::<ShiftRightCols<u8>>();
 
@@ -70,29 +69,6 @@ impl<F: PrimeField32> ShiftRightCols<F> {
         for i in (0..U32_LIMBS).rev() {
             let b = input_bytes_rotated[i].to_string().parse::<u8>().unwrap();
             let c = nb_bits_to_shift as u8;
-            // self.shift_overflow[i] = F::ZERO;
-
-            // let (shift, carry) = {
-            //     let c_mod = c & 0x7;
-            //     if c_mod != 0 {
-            //         let res = b >> c_mod;
-            //         let remainder = b - (res << c_mod);
-            //         let carry = (b << (8 - c_mod)) >> (8 - c_mod);
-            //         self.c_mod_is_zero[i] = F::ZERO;
-            //         self.left_aligned_carry[i] = F::from_canonical_u8(b << (8 - c_mod));
-            //         if ((b as u32) << (8 - c_mod)) > 255 {
-            //             self.shift_overflow[i] =
-            //                 F::from_canonical_u8(((b as u32) << (8 - c_mod) >> 8) as u8);
-            //         }
-            //         self.shift_remainder[i] = F::from_canonical_u8(remainder);
-            //         (res, carry)
-            //     } else {
-            //         self.c_mod_is_zero[i] = F::ONE;
-            //         self.left_aligned_carry[i] = F::ZERO;
-            //         (b, 0u8)
-            //     }
-            // };
-
 
             let req = lookup.request(b, c, ByteLookupOp::ShrCarry);
             let shift = req[0];
@@ -138,7 +114,11 @@ impl<F: PrimeField32> ShiftRightCols<F> {
         let mut input_iter = input.into_iter();
         let input_bytes_rotated: [<AB as AirBuilder>::Expr; U32_LIMBS] = std::array::from_fn(|i| {
             if i + nb_bytes_to_shift < U32_LIMBS {
-                input_iter.nth((i + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone()
+                input_iter
+                    .nth((i + nb_bytes_to_shift) % U32_LIMBS)
+                    .unwrap()
+                    .into()
+                    .clone()
             } else {
                 AB::Expr::ZERO
             }
@@ -161,58 +141,6 @@ impl<F: PrimeField32> ShiftRightCols<F> {
 
             builder.push_interaction(lookup_bus, interaction_data, AB::Expr::ONE, 1);
 
-            // let c_mod = (nb_bits_to_shift & 0x07) as u8;
-
-            // let c_mod_not_zero = AB::Expr::ONE - cols.c_mod_is_zero[i].clone();
-            // // assert when c_mod is zero
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_zero(AB::F::from_canonical_u8(c_mod));
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_eq(input_bytes_rotated[i].clone(), cols.shift[i].clone());
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_zero(cols.carry[i].clone());
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_zero(cols.left_aligned_carry[i].clone());
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_zero(cols.shift_overflow[i].clone());
-
-            // // assert when c_mod is not zero
-            // let left_shift_amount = 8 - c_mod;
-            // builder.when(c_mod_not_zero.clone()).assert_eq(
-            //     input_bytes_rotated[i].clone(),
-            //     cols.shift[i].clone().into().mul_2exp_u64(c_mod as u64)
-            //         + cols.shift_remainder[i].clone(),
-            // );
-            // builder.when(c_mod_not_zero.clone()).assert_eq(
-            //     cols.left_aligned_carry[i].clone()
-            //         + cols.shift_overflow[i].clone().into().mul_2exp_u64(8),
-            //     input_bytes_rotated[i]
-            //         .clone()
-            //         .mul_2exp_u64(left_shift_amount as u64),
-            // );
-            // builder.when(c_mod_not_zero).assert_eq(
-            //     cols.carry[i]
-            //         .clone()
-            //         .into()
-            //         .mul_2exp_u64(left_shift_amount as u64),
-            //     cols.left_aligned_carry[i].clone(),
-            // );
-
-            // // assert when c_mod is zero
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_eq(cols.shift[i].clone(), input_bytes_rotated[i].clone());
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_zero(cols.carry[i].clone());
-            // builder
-            //     .when(cols.c_mod_is_zero[i].clone())
-            //     .assert_zero(cols.left_aligned_carry[i].clone());
             if i == U32_LIMBS - 1 {
                 first_shift = cols.shift[i].clone().into();
             } else {
@@ -226,20 +154,6 @@ impl<F: PrimeField32> ShiftRightCols<F> {
         }
 
         // For the first byte, we didn't know the last carry so compute the rotated byte here.
-        builder.assert_eq(
-            cols.value[U32_LIMBS - 1].clone(),
-            first_shift,
-        );
-    }
-}
-
-impl<F> Borrow<ShiftRightCols<F>> for [F] {
-    fn borrow(&self) -> &ShiftRightCols<F> {
-        debug_assert_eq!(self.len(), NUM_SHIFT_RIGHT_COLS);
-        let (prefix, shorts, suffix) = unsafe { self.align_to::<ShiftRightCols<F>>() };
-        debug_assert!(prefix.is_empty(), "Alignment should match");
-        debug_assert!(suffix.is_empty(), "Alignment should match");
-        debug_assert_eq!(shorts.len(), 1);
-        &shorts[0]
+        builder.assert_eq(cols.value[U32_LIMBS - 1].clone(), first_shift);
     }
 }

@@ -1,5 +1,6 @@
 use core::borrow::Borrow;
 
+use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_air::AirBuilder;
 use p3_field::{FieldAlgebra, PrimeField32};
@@ -7,7 +8,7 @@ use p3_sha512::chips::byte::{ByteLookupChip, ByteLookupOp, utils::shr_carry};
 
 use crate::constants::U32_LIMBS;
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
 pub struct Xor3Cols<T> {
     /// The result of `x ^ y`.
@@ -52,7 +53,7 @@ impl<F: PrimeField32> Xor3Cols<F> {
             interaction_data.push(cols.xor_xy[i].clone().into());
             interaction_data.push(AB::Expr::ZERO);
             builder.push_interaction(lookup_bus, interaction_data, AB::Expr::ONE, 1);
-        
+
             let mut interaction_data: Vec<AB::Expr> = Vec::new();
             interaction_data.push(cols.xor_xy[i].clone().into());
             interaction_data.push(z_iter.nth(i).unwrap().into().clone());
@@ -61,16 +62,5 @@ impl<F: PrimeField32> Xor3Cols<F> {
             interaction_data.push(AB::Expr::ZERO);
             builder.push_interaction(lookup_bus, interaction_data, AB::Expr::ONE, 1);
         }
-    }
-}
-
-impl<F> Borrow<Xor3Cols<F>> for [F] {
-    fn borrow(&self) -> &Xor3Cols<F> {
-        debug_assert_eq!(self.len(), NUM_XOR_COLS);
-        let (prefix, shorts, suffix) = unsafe { self.align_to::<Xor3Cols<F>>() };
-        debug_assert!(prefix.is_empty(), "Alignment should match");
-        debug_assert!(suffix.is_empty(), "Alignment should match");
-        debug_assert_eq!(shorts.len(), 1);
-        &shorts[0]
     }
 }
