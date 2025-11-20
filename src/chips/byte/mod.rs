@@ -26,19 +26,20 @@ pub mod utils;
 
 pub use crate::*;
 
-pub const NUM_BYTE_LOOKUP_OPS: usize = 2;
+pub const NUM_BYTE_LOOKUP_OPS: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum ByteLookupOp {
     Xor,
     ShrCarry,
+    And,
 }
 
 impl ByteLookupOp {
     /// Get all the byte opcodes.
     #[must_use]
     pub fn all() -> Vec<Self> {
-        let opcodes = vec![ByteLookupOp::Xor, ByteLookupOp::ShrCarry];
+        let opcodes = vec![ByteLookupOp::Xor, ByteLookupOp::ShrCarry, ByteLookupOp::And];
         assert_eq!(opcodes.len(), NUM_BYTE_LOOKUP_OPS);
         opcodes
     }
@@ -82,6 +83,10 @@ impl ByteLookupChip {
         x ^ y
     }
 
+    fn calc_and(&self, x: u8, y: u8) -> u8 {
+        x & y
+    }
+
     /// Request an XOR operation for inputs x and y
     /// Increments the count for this (x,y) pair and returns x ⊕ y
     pub fn request(&self, x: u8, y: u8, op: ByteLookupOp) -> Vec<u8> {
@@ -95,6 +100,9 @@ impl ByteLookupChip {
             ByteLookupOp::ShrCarry => {
                 let (shr, carry) = shr_carry(x, y);
                 vec![shr, carry]
+            }
+            ByteLookupOp::And => {
+                vec![self.calc_and(x, y), 0]
             }
         }
     }
