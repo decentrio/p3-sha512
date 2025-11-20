@@ -63,6 +63,10 @@ impl<F: Field> BaseAir<F> for ByteLookupAir {
                         col.shr = F::from_canonical_u8(res);
                         col.shr_carry = F::from_canonical_u8(carry);
                     }
+                    ByteLookupOp::And => {
+                        let and = x & y;
+                        col.and = F::from_canonical_u8(and);
+                    }
                 };
             }
         }
@@ -103,5 +107,15 @@ where
                 vec![prep_local.shr, prep_local.shr_carry],
             )
             .eval(builder, local.muls[ByteLookupOp::ShrCarry as usize]);
+
+        // Enforce that (x, y, x & y) exists in the lookup table
+        self.bus
+            .receive(
+                prep_local.x,
+                prep_local.y,
+                super::ByteLookupOp::And,
+                vec![prep_local.and.into(), AB::Expr::ZERO],
+            )
+            .eval(builder, local.muls[ByteLookupOp::And as usize]);
     }
 }
