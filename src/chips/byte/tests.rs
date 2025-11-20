@@ -259,3 +259,93 @@ fn test_shr_carry() {
         .prove_then_verify(&pk, ProvingContext::new(ctxs))
         .unwrap();
 }
+
+#[test]
+fn test_and() {
+    setup_tracing();
+
+    let mut rng = create_seeded_rng();
+
+    const LOG_XOR_REQUESTS: usize = 1;
+    const LOG_NUM_REQUESTERS: usize = 1;
+
+    const XOR_REQUESTS: usize = 1 << LOG_XOR_REQUESTS;
+    const NUM_REQUESTERS: usize = 1 << LOG_NUM_REQUESTERS;
+
+    const BYTE_XOR_BUS: u16 = 10;
+
+    let xor_chip = ByteLookupChip::new(BYTE_XOR_BUS);
+
+    let requesters_lists = (0..NUM_REQUESTERS)
+        .map(|_| {
+            (0..XOR_REQUESTS)
+                .map(|_| {
+                    let x = rng.r#gen::<u8>();
+                    let y = rng.r#gen::<u8>();
+
+                    (1, vec![x, y])
+                })
+                .collect::<Vec<(u8, Vec<u8>)>>()
+        })
+        .collect::<Vec<Vec<(u8, Vec<u8>)>>>();
+
+    let requesters = (0..NUM_REQUESTERS)
+        .map(|_| ByteInteractionAir {
+            bus_index: BYTE_XOR_BUS,
+            op: ByteLookupOp::And,
+        })
+        .collect::<Vec<ByteInteractionAir>>();
+
+    let requesters_traces = requesters_lists
+        .par_iter()
+        .map(|list| {
+            RowMajorMatrix::new(
+                list.clone()
+                    .into_iter()
+                    .flat_map(|(count, fields)| {
+                        let x = fields[0];
+                        let y = fields[1];
+                        let res = xor_chip.request(x, y, ByteLookupOp::And);
+                        // iter::once(count).chain(fields).chain(iter::once(z))
+                        fields.into_iter().chain(res.into_iter())
+                    })
+                    .map(FieldAlgebra::from_canonical_u8)
+                    .collect(),
+                NUM_BYTE_INTERACTION_COLS,
+            )
+        })
+        .collect::<Vec<RowMajorMatrix<BabyBear>>>();
+
+    println!("Generated requester traces {:?}", requesters_traces[0]);
+
+    let xor_trace = xor_chip.generate_trace();
+
+    let mut all_chips: Vec<AirRef<_>> = vec![];
+    for requester in requesters {
+        all_chips.push(Arc::new(requester));
+    }
+    all_chips.push(Arc::new(xor_chip.air));
+
+    let all_traces = requesters_traces
+        .into_iter()
+        .chain(iter::once(xor_trace))
+        .collect::<Vec<RowMajorMatrix<BabyBear>>>();
+
+    let engine = BabyBearKeccakEngine::new(
+        FriParameters::standard_with_100_bits_conjectured_security(LOG_BLOWUP),
+    );
+    let mut keygen_builder = engine.keygen_builder();
+
+    let ctxs = all_chips
+        .into_iter()
+        .map(|air| keygen_builder.add_air(air))
+        .zip(all_traces.into_iter())
+        .map(|(id, trace)| (id, AirProvingContext::simple_no_pis(Arc::new(trace))))
+        .collect::<Vec<_>>();
+
+    let pk = keygen_builder.generate_pk();
+
+    engine
+        .prove_then_verify(&pk, ProvingContext::new(ctxs))
+        .unwrap();
+}

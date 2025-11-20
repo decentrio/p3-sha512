@@ -19,6 +19,8 @@ pub struct ByteLookupPreprocessedCols<T> {
 
     pub shr: T,
     pub shr_carry: T,
+
+    pub and: T,
 }
 
 pub const NUM_BYTE_LOOKUP_COLS: usize = size_of::<ByteLookupCols<u8>>();

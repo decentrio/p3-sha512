@@ -224,19 +224,28 @@ pub mod tests {
             rotation: usize,
             extra_capacity_bits: usize,
         ) -> RowMajorMatrix<F> {
-            let trace_length = NUM_RIGHT_ROTATE_COLS;
-            let mut long_trace = F::zero_vec(trace_length << extra_capacity_bits);
-            long_trace.truncate(trace_length);
+            let trace_length: usize = NUM_RIGHT_ROTATE_COLS;
+            let num_rows = 500000usize.next_power_of_two();
+            let mut long_trace = F::zero_vec((trace_length * num_rows) << extra_capacity_bits);
+
+            println!(
+                "Generating right rotate trace... {:?}",
+                (trace_length * num_rows) << extra_capacity_bits
+            );
+            long_trace.truncate(trace_length * num_rows);
 
             let mut trace = RowMajorMatrix::new(long_trace, NUM_RIGHT_ROTATE_COLS);
             let (prefix, rows, suffix) =
                 unsafe { trace.values.align_to_mut::<RightRotateCols<F>>() };
             assert!(prefix.is_empty(), "Alignment should match");
             assert!(suffix.is_empty(), "Alignment should match");
-            assert_eq!(rows.len(), 1);
+            assert_eq!(rows.len(), num_rows);
 
-            let result = rows[0].populate(byte_lookup, input, rotation);
-            println!("result: {}", result);
+            for row in rows.iter_mut() {
+                let result = row.populate(byte_lookup, input, rotation);
+                // println!("result: {}", result);
+            }
+
             trace
         }
     }
@@ -275,10 +284,10 @@ pub mod tests {
 
         let mut rng = create_seeded_rng();
 
-        const LOG_XOR_REQUESTS: usize = 2;
+        const LOG_REQUESTS: usize = 2;
         const LOG_NUM_REQUESTERS: usize = 2;
 
-        const XOR_REQUESTS: usize = 1 << LOG_XOR_REQUESTS;
+        const XOR_REQUESTS: usize = 1 << LOG_REQUESTS;
         const NUM_REQUESTERS: usize = 1 << LOG_NUM_REQUESTERS;
 
         const BYTE_XOR_BUS: u16 = 10;
