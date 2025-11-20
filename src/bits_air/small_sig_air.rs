@@ -8,8 +8,7 @@ use p3_sha512::chips::byte::ByteLookupChip;
 
 use crate::{bits_air::{rotr_air::RightRotateCols, sr_air::ShiftRightCols, xor_air::Xor3Cols}, constants::U32_LIMBS};
 
-const BYTE_XOR_BUS: u16 = 10;
-const BYTE_SHR_CARRY_BUS: u16 = 11;
+const BUS_INDEX: u16 = 10;
 
 #[derive(Default, Debug, Clone, Copy)]
 #[repr(C)]
@@ -76,35 +75,10 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma0Air {
         let local = main.row_slice(0);
         let local: &SmallSigmaCols<AB::Var> = (*local).borrow();
 
-        let input = [
-            local.input[0].into(),
-            local.input[1].into(),
-            local.input[2].into(),
-            local.input[3].into(),
-        ];
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BYTE_SHR_CARRY_BUS, input.clone(), 7, &local.rrots[0]);
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BYTE_SHR_CARRY_BUS, input.clone(), 18, &local.rrots[0]);
-        ShiftRightCols::<AB::F>::eval(builder, BYTE_SHR_CARRY_BUS, input.clone(), 3, &local.sr);
-        
-        let x = [
-            local.rrots[0].value[0].into(),
-            local.rrots[0].value[1].into(),
-            local.rrots[0].value[2].into(),
-            local.rrots[0].value[3].into(),
-        ];
-        let y = [
-            local.rrots[1].value[0].into(),
-            local.rrots[1].value[1].into(),
-            local.rrots[1].value[2].into(),
-            local.rrots[1].value[3].into(),
-        ];
-        let z = [
-            local.sr.value[0].into(),
-            local.sr.value[1].into(),
-            local.sr.value[2].into(),
-            local.sr.value[3].into(),
-        ];
-        Xor3Cols::<AB::F>::eval(builder, BYTE_XOR_BUS, x, y, z, &local.xor3);
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 7, &local.rrots[0]);
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 18, &local.rrots[1]);
+        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, local.input.clone(), 3, &local.sr);
+        Xor3Cols::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.sr.value, &local.xor3);
     }
 }
 
@@ -166,35 +140,10 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma1Air {
         let local = main.row_slice(0);
         let local: &SmallSigmaCols<AB::Var> = (*local).borrow();
 
-        let input = [
-            local.input[0].into(),
-            local.input[1].into(),
-            local.input[2].into(),
-            local.input[3].into(),
-        ];
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BYTE_SHR_CARRY_BUS, input.clone(), 7, &local.rrots[0]);
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BYTE_SHR_CARRY_BUS, input.clone(), 18, &local.rrots[0]);
-        ShiftRightCols::<AB::F>::eval(builder, BYTE_SHR_CARRY_BUS, input.clone(), 3, &local.sr);
-        
-        let x = [
-            local.rrots[0].value[0].into(),
-            local.rrots[0].value[1].into(),
-            local.rrots[0].value[2].into(),
-            local.rrots[0].value[3].into(),
-        ];
-        let y = [
-            local.rrots[1].value[0].into(),
-            local.rrots[1].value[1].into(),
-            local.rrots[1].value[2].into(),
-            local.rrots[1].value[3].into(),
-        ];
-        let z = [
-            local.sr.value[0].into(),
-            local.sr.value[1].into(),
-            local.sr.value[2].into(),
-            local.sr.value[3].into(),
-        ];
-        Xor3Cols::<AB::F>::eval(builder, BYTE_XOR_BUS, x, y, z, &local.xor3);
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 7, &local.rrots[0]);
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.clone(), 18, &local.rrots[1]);
+        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, local.input.clone(), 3, &local.sr);
+        Xor3Cols::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.sr.value, &local.xor3);
     }
 }
 
@@ -211,4 +160,58 @@ fn generate_sig1_trace_rows<F: PrimeField32>(
     let z = row.sr.populate(byte_lookup, input, 10);
 
     row.xor3.populate(byte_lookup, x, y, z);
+}
+
+pub mod tests {
+    use std::sync::Arc;
+
+    use openvm_stark_backend::{AirRef, prover::types::{AirProvingContext, ProvingContext}};
+    use openvm_stark_sdk::{config::{FriParameters, baby_bear_keccak::BabyBearKeccakEngine, setup_tracing}, engine::{StarkEngine, StarkFriEngine}, utils::create_seeded_rng};
+    use p3_sha512::chips::byte::ByteLookupChip;
+    use rand::Rng;
+
+    use crate::bits_air::small_sig_air::{BUS_INDEX, SmallSigma0Air};
+    const LOG_BLOWUP: usize = 1;
+
+    #[test]
+    fn test_small_sig() {
+        
+        setup_tracing();
+
+        let mut rng = create_seeded_rng();
+
+        let byte_chip = ByteLookupChip::new(BUS_INDEX);
+
+        let input: u32 = rng.r#gen();
+        
+        let air = SmallSigma0Air{};
+        let trace = air.generate_trace_rows(&byte_chip, input, LOG_BLOWUP);
+
+        let byte_trace = byte_chip.generate_trace();
+
+        let mut all_chips: Vec<AirRef<_>> = vec![];
+
+        all_chips.push(Arc::new(air));
+        all_chips.push(Arc::new(byte_chip.air));
+
+        let all_traces = vec![trace, byte_trace];
+
+        let engine = BabyBearKeccakEngine::new(
+            FriParameters::standard_with_100_bits_conjectured_security(LOG_BLOWUP),
+        );
+        let mut keygen_builder = engine.keygen_builder();
+
+        let ctxs = all_chips
+            .into_iter()
+            .map(|air| keygen_builder.add_air(air))
+            .zip(all_traces.into_iter())
+            .map(|(id, trace)| (id, AirProvingContext::simple_no_pis(Arc::new(trace))))
+            .collect::<Vec<_>>();
+
+        let pk = keygen_builder.generate_pk();
+
+        engine
+            .prove_then_verify(&pk, ProvingContext::new(ctxs))
+            .unwrap();
+    }
 }

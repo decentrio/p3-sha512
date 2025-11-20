@@ -36,15 +36,18 @@ impl<F: PrimeField32> Xor3Cols<F> {
     pub fn eval<AB: InteractionBuilder>(
         builder: &mut AB,
         lookup_bus: BusIndex,
-        x: [AB::Expr; U32_LIMBS],
-        y: [AB::Expr; U32_LIMBS],
-        z: [AB::Expr; U32_LIMBS],
+        x: impl IntoIterator<Item = impl Into<AB::Expr>>,
+        y: impl IntoIterator<Item = impl Into<AB::Expr>>,
+        z: impl IntoIterator<Item = impl Into<AB::Expr>>,
         cols: &Xor3Cols<AB::Var>,
     ) {
+        let mut x_iter = x.into_iter();
+        let mut y_iter = y.into_iter();
+        let mut z_iter = z.into_iter();
         for i in 0..U32_LIMBS {
             let mut interaction_data: Vec<AB::Expr> = Vec::new();
-            interaction_data.push(x[i].clone());
-            interaction_data.push(y[i].clone());
+            interaction_data.push(x_iter.nth(i).unwrap().into().clone());
+            interaction_data.push(y_iter.nth(i).unwrap().into().clone());
             interaction_data.push(AB::Expr::from_canonical_u8(ByteLookupOp::Xor as u8));
             interaction_data.push(cols.xor_xy[i].clone().into());
             interaction_data.push(AB::Expr::ZERO);
@@ -52,7 +55,7 @@ impl<F: PrimeField32> Xor3Cols<F> {
         
             let mut interaction_data: Vec<AB::Expr> = Vec::new();
             interaction_data.push(cols.xor_xy[i].clone().into());
-            interaction_data.push(z[i].clone());
+            interaction_data.push(z_iter.nth(i).unwrap().into().clone());
             interaction_data.push(AB::Expr::from_canonical_u8(ByteLookupOp::Xor as u8));
             interaction_data.push(cols.value[i].clone().into());
             interaction_data.push(AB::Expr::ZERO);

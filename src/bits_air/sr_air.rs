@@ -125,7 +125,7 @@ impl<F: PrimeField32> ShiftRightCols<F> {
     pub fn eval<AB: InteractionBuilder>(
         builder: &mut AB,
         lookup_bus: BusIndex,
-        input: [AB::Expr; U32_LIMBS],
+        input: impl IntoIterator<Item = impl Into<AB::Expr>>,
         rotation: usize,
         cols: &ShiftRightCols<AB::Var>,
     ) {
@@ -135,9 +135,10 @@ impl<F: PrimeField32> ShiftRightCols<F> {
         let carry_multiplier = AB::F::from_canonical_u32(Self::carry_multiplier(rotation));
 
         // Perform the byte shift.
+        let mut input_iter = input.into_iter();
         let input_bytes_rotated: [<AB as AirBuilder>::Expr; U32_LIMBS] = std::array::from_fn(|i| {
             if i + nb_bytes_to_shift < U32_LIMBS {
-                input[(i + nb_bytes_to_shift) % U32_LIMBS].clone().into()
+                input_iter.nth((i + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone()
             } else {
                 AB::Expr::ZERO
             }

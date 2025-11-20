@@ -123,7 +123,7 @@ impl<F: PrimeField32> RightRotateCols<F> {
     pub fn eval<AB: InteractionBuilder>(
         builder: &mut AB,
         lookup_bus: BusIndex,
-        input: [AB::Expr; U32_LIMBS],
+        input: impl IntoIterator<Item = impl Into<AB::Expr>>,
         rotation: usize,
         cols: &RightRotateCols<AB::Var>,
     ) {
@@ -133,11 +133,12 @@ impl<F: PrimeField32> RightRotateCols<F> {
         let carry_multiplier = AB::F::from_canonical_u32(Self::carry_multiplier(rotation));
 
         // Perform the byte shift.
+        let mut input_iter = input.into_iter();
         let input_bytes_rotated = [
-            input[nb_bytes_to_shift % U32_LIMBS].clone(),
-            input[(1 + nb_bytes_to_shift) % U32_LIMBS].clone(),
-            input[(2 + nb_bytes_to_shift) % U32_LIMBS].clone(),
-            input[(3 + nb_bytes_to_shift) % U32_LIMBS].clone(),
+            input_iter.nth(nb_bytes_to_shift % U32_LIMBS).unwrap().into().clone(),
+            input_iter.nth((1 + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone(),
+            input_iter.nth((2 + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone(),
+            input_iter.nth((3 + nb_bytes_to_shift) % U32_LIMBS).unwrap().into().clone(),
         ];
 
         // For each byte, calculate the shift and carry. If it's not the first byte, calculate the
