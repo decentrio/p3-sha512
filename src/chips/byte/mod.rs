@@ -26,20 +26,26 @@ pub mod utils;
 
 pub use crate::*;
 
-pub const NUM_BYTE_LOOKUP_OPS: usize = 3;
+pub const NUM_BYTE_LOOKUP_OPS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum ByteLookupOp {
     Xor,
     ShrCarry,
     And,
+    U8RangeCheck,
 }
 
 impl ByteLookupOp {
     /// Get all the byte opcodes.
     #[must_use]
     pub fn all() -> Vec<Self> {
-        let opcodes = vec![ByteLookupOp::Xor, ByteLookupOp::ShrCarry, ByteLookupOp::And];
+        let opcodes = vec![
+            ByteLookupOp::Xor,
+            ByteLookupOp::ShrCarry,
+            ByteLookupOp::And,
+            ByteLookupOp::U8RangeCheck,
+        ];
         assert_eq!(opcodes.len(), NUM_BYTE_LOOKUP_OPS);
         opcodes
     }
@@ -103,6 +109,10 @@ impl ByteLookupChip {
             }
             ByteLookupOp::And => {
                 vec![self.calc_and(x, y), 0]
+            }
+            ByteLookupOp::U8RangeCheck => {
+                // No output values needed for range check
+                vec![0, 0]
             }
         }
     }
