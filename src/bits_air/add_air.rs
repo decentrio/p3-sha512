@@ -1,7 +1,7 @@
 use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_field::Field;
-use p3_sha512::{
+use crate::{
     builder::ChipBuilder,
     chips::byte::{ByteLookupChip, ByteLookupOp},
 };

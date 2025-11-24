@@ -4,7 +4,7 @@ use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_air::AirBuilder;
 use p3_field::{FieldAlgebra, PrimeField32};
-use p3_sha512::chips::byte::{ByteLookupChip, ByteLookupOp, utils::shr_carry};
+use crate::chips::byte::{ByteLookupChip, ByteLookupOp, utils::shr_carry};
 
 use crate::constants::U32_LIMBS;
 
@@ -176,7 +176,7 @@ pub mod tests {
     use p3_mersenne_31::{Mersenne31, Poseidon2Mersenne31};
     use p3_monty_31::dft::RecursiveDft;
     use p3_sha256::Sha256;
-    use p3_sha512::chips::byte::ByteLookupChip;
+    use crate::chips::byte::ByteLookupChip;
     use p3_symmetric::{
         CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher32, TruncatedPermutation,
     };
