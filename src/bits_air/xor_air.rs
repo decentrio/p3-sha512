@@ -47,8 +47,8 @@ impl<F: PrimeField32> Xor3Cols<F> {
         let mut z_iter = z.into_iter();
         for i in 0..U32_LIMBS {
             let mut interaction_data: Vec<AB::Expr> = Vec::new();
-            interaction_data.push(x_iter.nth(i).unwrap().into().clone());
-            interaction_data.push(y_iter.nth(i).unwrap().into().clone());
+            interaction_data.push(x_iter.next().unwrap().into().clone());
+            interaction_data.push(y_iter.next().unwrap().into().clone());
             interaction_data.push(AB::Expr::from_canonical_u8(ByteLookupOp::Xor as u8));
             interaction_data.push(cols.xor_xy[i].clone().into());
             interaction_data.push(AB::Expr::ZERO);
@@ -56,7 +56,7 @@ impl<F: PrimeField32> Xor3Cols<F> {
 
             let mut interaction_data: Vec<AB::Expr> = Vec::new();
             interaction_data.push(cols.xor_xy[i].clone().into());
-            interaction_data.push(z_iter.nth(i).unwrap().into().clone());
+            interaction_data.push(z_iter.next().unwrap().into().clone());
             interaction_data.push(AB::Expr::from_canonical_u8(ByteLookupOp::Xor as u8));
             interaction_data.push(cols.value[i].clone().into());
             interaction_data.push(AB::Expr::ZERO);

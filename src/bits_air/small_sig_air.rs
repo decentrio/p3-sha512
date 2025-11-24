@@ -70,21 +70,27 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma0Air {
         let local = main.row_slice(0);
         let local: &SmallSigmaCols<AB::Var> = (*local).borrow();
 
+        let input = [
+            local.input[0].into(),
+            local.input[1].into(),
+            local.input[2].into(),
+            local.input[3].into(),
+        ];
         RightRotateCols::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
-            local.input.clone(),
+            input.clone(),
             7,
             &local.rrots[0],
         );
         RightRotateCols::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
-            local.input.clone(),
+            input.clone(),
             18,
             &local.rrots[1],
         );
-        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, local.input.clone(), 3, &local.sr);
+        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 3, &local.sr);
         Xor3Cols::<AB::F>::eval(
             builder,
             BUS_INDEX,
@@ -153,21 +159,27 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma1Air {
         let local = main.row_slice(0);
         let local: &SmallSigmaCols<AB::Var> = (*local).borrow();
 
+        let input = [
+            local.input[0].into(),
+            local.input[1].into(),
+            local.input[2].into(),
+            local.input[3].into(),
+        ];
         RightRotateCols::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
-            local.input.clone(),
+            input.clone(),
             7,
             &local.rrots[0],
         );
         RightRotateCols::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
-            local.input.clone(),
+            input.clone(),
             18,
             &local.rrots[1],
         );
-        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, local.input.clone(), 3, &local.sr);
+        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 3, &local.sr);
         Xor3Cols::<AB::F>::eval(
             builder,
             BUS_INDEX,
