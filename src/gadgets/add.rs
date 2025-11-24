@@ -66,7 +66,7 @@ impl<F: Field, const N: usize> AddGadget<F, N> {
     pub fn eval<AB: ChipBuilder>(
         builder: &mut AB,
         lookup_bus: BusIndex,
-        inputs: [[AB::Var; U32_LIMBS]; N],
+        inputs: [[impl Into<AB::Expr> + Clone; U32_LIMBS]; N],
         cols: &AddGadget<AB::Var, N>,
     ) {
         // Range check each byte.
@@ -106,7 +106,7 @@ impl<F: Field, const N: usize> AddGadget<F, N> {
             let base = AB::F::from_canonical_u32(256);
             for i in 0..U32_LIMBS {
                 let mut overflow = AB::Expr::ZERO;
-                for input in inputs {
+                for input in inputs.iter() {
                     overflow += input[i].clone().into();
                 }
                 overflow -= cols.value[i].clone().into();
@@ -117,5 +117,129 @@ impl<F: Field, const N: usize> AddGadget<F, N> {
                 builder.assert_eq(cols.carry[i] * base, overflow.clone());
             }
         }
+    }
+}
+
+pub mod tests {
+    use std::{borrow::Borrow, sync::Arc, vec};
+
+    use openvm_stark_backend::{AirRef, interaction::{BusIndex, InteractionBuilder}, prover::types::{AirProvingContext, ProvingContext}, rap::{BaseAirWithPublicValues, PartitionedBaseAir}};
+    use openvm_stark_sdk::{config::{FriParameters, baby_bear_keccak::BabyBearKeccakEngine, setup_tracing}, engine::{StarkEngine, StarkFriEngine}, utils::create_seeded_rng};
+    use p3_air::{Air, BaseAir};
+    use p3_field::{PrimeField32, FieldAlgebra};
+    use p3_matrix::{Matrix, dense::RowMajorMatrix};
+    use rand::Rng;
+
+    use crate::{builder::ChipBuilder, chips::byte::ByteLookupChip, gadgets::add::AddGadget};
+
+    const BYTE_XOR_BUS: BusIndex = 10;
+    const LOG_BLOWUP: usize = 1;
+
+    #[derive(Debug)]
+    pub struct ExampleAir<const N: usize> {
+        inputs: Vec<[u32; N]>,
+    }
+
+    impl<const N: usize> ExampleAir<N> {
+        pub fn generate_trace_rows<F: PrimeField32>(
+            &mut self,
+            rng: &mut impl Rng,
+            byte_lookup: &mut ByteLookupChip,
+            extra_capacity_bits: usize,
+        ) -> RowMajorMatrix<F> {
+            let trace_length = size_of::<AddGadget<u8, N>>();
+            let num_rows = 500000usize.next_power_of_two();
+            let mut long_trace = F::zero_vec((trace_length * num_rows) << extra_capacity_bits);
+
+              println!(
+                "Generating right rotate trace... {:?}",
+                (trace_length * num_rows) << extra_capacity_bits
+            );
+            long_trace.truncate(trace_length * num_rows);
+
+            let mut trace = RowMajorMatrix::new(long_trace, trace_length);
+
+            let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<AddGadget<F, N>>() };
+            assert!(prefix.is_empty(), "Alignment should match");
+            assert!(suffix.is_empty(), "Alignment should match");
+            assert_eq!(rows.len(), num_rows);
+
+            for row in rows.iter_mut() {
+                let mut inputs = [0u32; N];
+                inputs.iter_mut().for_each(|input| {
+                    *input = rng.next_u32();
+                });
+                row.populate(byte_lookup, inputs);
+                self.inputs.push(inputs);
+            }
+            trace
+        }
+    }
+
+    impl<F, const N: usize> BaseAir<F> for ExampleAir<N> {
+        fn width(&self) -> usize {
+            size_of::<AddGadget<u8, N>>()
+        }
+    }
+
+    impl<F, const N: usize> BaseAirWithPublicValues<F> for ExampleAir<N> {}
+
+    impl<F, const N: usize> PartitionedBaseAir<F> for ExampleAir<N> {}
+
+    impl<AB: ChipBuilder<F: PrimeField32>, const N: usize> Air<AB> for ExampleAir<N> {
+        #[inline]
+        fn eval(&self, builder: &mut AB) {
+            let main = builder.main();
+            let local = main.row_slice(0);
+            let local: &AddGadget<AB::Var, N> = (*local).borrow();
+            for inputs in self.inputs.iter() {
+                let inputs = inputs.map(|input| {
+                    let bytes = input.to_le_bytes();
+                    bytes.map(|b| AB::Expr::from_canonical_u8(b))
+                });
+
+                AddGadget::<AB::F, N>::eval(builder, BYTE_XOR_BUS, inputs, local);
+            }
+        }
+    }
+
+    #[test]
+    fn test_add() {
+        // WARNING: Use a real cryptographic PRNG in applications!!
+        setup_tracing();
+
+        let mut rng = create_seeded_rng();
+        let mut byte_chip = ByteLookupChip::new(BYTE_XOR_BUS);
+
+        let input = vec![];
+        let mut air = ExampleAir::<5> { inputs: input };
+
+        let trace = air.generate_trace_rows(&mut rng, &mut byte_chip, LOG_BLOWUP);
+        let byte_trace = byte_chip.generate_trace();
+
+        let mut all_chips: Vec<AirRef<_>> = vec![];
+
+        all_chips.push(Arc::new(air));
+        all_chips.push(Arc::new(byte_chip.air));
+
+        let all_traces = vec![trace, byte_trace];
+
+         let engine = BabyBearKeccakEngine::new(
+            FriParameters::standard_with_100_bits_conjectured_security(LOG_BLOWUP),
+        );
+        let mut keygen_builder = engine.keygen_builder();
+
+        let ctxs = all_chips
+            .into_iter()
+            .map(|air| keygen_builder.add_air(air))
+            .zip(all_traces.into_iter())
+            .map(|(id, trace)| (id, AirProvingContext::simple_no_pis(Arc::new(trace))))
+            .collect::<Vec<_>>();
+
+        let pk = keygen_builder.generate_pk();
+
+        engine
+            .prove_then_verify(&pk, ProvingContext::new(ctxs))
+            .unwrap();
     }
 }
