@@ -65,9 +65,16 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for BigSigma0Air {
         let local = main.row_slice(0);
         let local: &BigSigmaCols<AB::Var> = (*local).borrow();
 
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.to_vec().clone(), 2, &local.rrots[0]);
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.to_vec().clone(), 13, &local.rrots[1]);
-        RightRotateCols::<AB::F>::eval(builder, BUS_INDEX, local.input.to_vec().clone(), 22, &local.rrots[2]);
+        
+        let input = [
+            local.input[0].into(),
+            local.input[1].into(),
+            local.input[2].into(),
+            local.input[3].into(),
+        ];
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 2, &local.rrots[0]);
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 13, &local.rrots[1]);
+        RightRotateCols::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 22, &local.rrots[2]);
         Xor3Cols::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.rrots[2].value, &local.xor3);
     }
 }
@@ -132,9 +139,15 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for BigSigma1Air {
         let local = main.row_slice(0);
         let local: &BigSigmaCols<AB::Var> = (*local).borrow();
 
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.to_vec().clone(), 6, &local.rrots[0]);
-        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, local.input.to_vec().clone(), 11, &local.rrots[1]);
-        RightRotateCols::<AB::F>::eval(builder, BUS_INDEX, local.input.to_vec().clone(), 25, &local.rrots[2]);
+        let input = [
+            local.input[0].into(),
+            local.input[1].into(),
+            local.input[2].into(),
+            local.input[3].into(),
+        ];
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 6, &local.rrots[0]);
+        RightRotateCols::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 11, &local.rrots[1]);
+        RightRotateCols::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 25, &local.rrots[2]);
         Xor3Cols::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.rrots[2].value, &local.xor3);
     }
 }
