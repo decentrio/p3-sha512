@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{self, AtomicU32},
 };
 
+use itertools::Itertools;
 use openvm_stark_backend::{
     Chip, ChipUsageGetter,
     config::{StarkGenericConfig, Val},
@@ -125,6 +126,14 @@ impl ByteLookupChip {
                     self.count[i][j][k].store(0, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+        }
+    }
+
+    pub fn request_u8_range_checks(&mut self, bytes: impl IntoIterator<Item = u8>) {
+        for mut pair in &bytes.into_iter().chunks(2) {
+            let b = pair.next().unwrap();
+            let c = pair.next().unwrap_or_default();
+            self.request(b, c, ByteLookupOp::U8RangeCheck);
         }
     }
 
