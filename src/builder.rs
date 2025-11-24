@@ -1,10 +1,23 @@
+use openvm_stark_backend::air_builders::debug::DebugConstraintBuilder;
+use openvm_stark_backend::air_builders::symbolic::SymbolicRapBuilder;
+use openvm_stark_backend::config::StarkGenericConfig;
 use openvm_stark_backend::interaction::BusIndex;
 use openvm_stark_backend::interaction::InteractionBuilder;
+use p3_field::Field;
 use p3_field::FieldAlgebra;
 
 use crate::chips::byte::ByteLookupOp;
 
 pub trait ChipBuilder: InteractionBuilder {
+    fn slice_range_check_u8(
+        &mut self,
+        lookup_bus: BusIndex,
+        input: &[impl Into<Self::Expr> + Clone],
+        // mult: impl Into<Self::Expr> + Clone,
+    );
+}
+
+impl<F: Field> ChipBuilder for SymbolicRapBuilder<F> {
     fn slice_range_check_u8(
         &mut self,
         lookup_bus: BusIndex,
@@ -35,5 +48,19 @@ pub trait ChipBuilder: InteractionBuilder {
 
             self.push_interaction(lookup_bus, interaction_data, Self::Expr::ONE, 1);
         }
+    }
+}
+
+impl<SC> ChipBuilder for DebugConstraintBuilder<'_, SC>
+where
+    SC: StarkGenericConfig,
+{
+    fn slice_range_check_u8(
+        &mut self,
+        lookup_bus: BusIndex,
+        input: &[impl Into<Self::Expr> + Clone],
+        // mult: impl Into<Self::Expr> + Clone,
+    ) {
+        // Skip for debug builder?
     }
 }
