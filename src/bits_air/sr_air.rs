@@ -4,7 +4,7 @@ use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_air::AirBuilder;
 use p3_field::{FieldAlgebra, PrimeField32};
-use p3_sha512::chips::byte::{ByteLookupChip, ByteLookupOp};
+use crate::chips::byte::{ByteLookupChip, ByteLookupOp};
 
 use crate::constants::U32_LIMBS;
 

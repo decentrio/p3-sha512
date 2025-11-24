@@ -67,6 +67,9 @@ impl<F: Field> BaseAir<F> for ByteLookupAir {
                         let and = x & y;
                         col.and = F::from_canonical_u8(and);
                     }
+                    ByteLookupOp::U8RangeCheck => {
+                        // No additional columns needed for range check.
+                    }
                 };
             }
         }
@@ -117,5 +120,15 @@ where
                 vec![prep_local.and.into(), AB::Expr::ZERO],
             )
             .eval(builder, local.muls[ByteLookupOp::And as usize]);
+
+        // Enforce that x and y is in the range [0, 255]
+        self.bus
+            .receive(
+                prep_local.x,
+                prep_local.y,
+                super::ByteLookupOp::U8RangeCheck,
+                vec![AB::Expr::ZERO, AB::Expr::ZERO],
+            )
+            .eval(builder, local.muls[ByteLookupOp::U8RangeCheck as usize]);
     }
 }

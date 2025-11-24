@@ -5,7 +5,7 @@ use openvm_stark_backend::{interaction::InteractionBuilder, rap::{BaseAirWithPub
 use p3_air::{Air, BaseAir};
 use p3_field::PrimeField32;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
-use p3_sha512::chips::byte::ByteLookupChip;
+use crate::chips::byte::ByteLookupChip;
 
 use crate::{bits_air::{rotr_air::RightRotateCols, xor_air::Xor3Cols}, constants::U32_LIMBS};
 

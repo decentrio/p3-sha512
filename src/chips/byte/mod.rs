@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{self, AtomicU32},
 };
 
+use itertools::Itertools;
 use openvm_stark_backend::{
     Chip, ChipUsageGetter,
     config::{StarkGenericConfig, Val},
@@ -26,20 +27,26 @@ pub mod utils;
 
 pub use crate::*;
 
-pub const NUM_BYTE_LOOKUP_OPS: usize = 3;
+pub const NUM_BYTE_LOOKUP_OPS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter)]
 pub enum ByteLookupOp {
     Xor,
     ShrCarry,
     And,
+    U8RangeCheck,
 }
 
 impl ByteLookupOp {
     /// Get all the byte opcodes.
     #[must_use]
     pub fn all() -> Vec<Self> {
-        let opcodes = vec![ByteLookupOp::Xor, ByteLookupOp::ShrCarry, ByteLookupOp::And];
+        let opcodes = vec![
+            ByteLookupOp::Xor,
+            ByteLookupOp::ShrCarry,
+            ByteLookupOp::And,
+            ByteLookupOp::U8RangeCheck,
+        ];
         assert_eq!(opcodes.len(), NUM_BYTE_LOOKUP_OPS);
         opcodes
     }
@@ -104,6 +111,10 @@ impl ByteLookupChip {
             ByteLookupOp::And => {
                 vec![self.calc_and(x, y), 0]
             }
+            ByteLookupOp::U8RangeCheck => {
+                // No output values needed for range check
+                vec![0, 0]
+            }
         }
     }
 
@@ -115,6 +126,14 @@ impl ByteLookupChip {
                     self.count[i][j][k].store(0, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+        }
+    }
+
+    pub fn request_u8_range_checks(&mut self, bytes: impl IntoIterator<Item = u8>) {
+        for mut pair in &bytes.into_iter().chunks(2) {
+            let b = pair.next().unwrap();
+            let c = pair.next().unwrap_or_default();
+            self.request(b, c, ByteLookupOp::U8RangeCheck);
         }
     }
 

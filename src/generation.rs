@@ -7,7 +7,9 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 
 use crate::{
-    columns::{ShaCols, NUM_SHA_COLS}, constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, U32_LIMBS}, utils::{big_sig1, ch, limbs_into_u32, maj}, SHA256_H, SHA256_K
+    columns::{NUM_SHA_COLS, ShaCols},
+    constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS},
+    utils::{big_sig1, ch, limbs_into_u32, maj},
 };
 
 pub fn generate_trace_rows<F: PrimeField32>(
@@ -69,14 +71,16 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
     let buf_u8: [[u8; U32_LIMBS]; 64] = array::from_fn(|i| buf[i].to_le_bytes());
 
     let prev_seed: [[u8; U32_LIMBS]; 8] = array::from_fn(|i| SHA256_H[i].to_le_bytes());
-    rows[0].prev_seed = array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(prev_seed[i][j])));
+    rows[0].prev_seed =
+        array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(prev_seed[i][j])));
 
     for round in 0..NUM_ROUNDS {
         if round != 0 {
             rows[round].prev_seed = rows[round - 1].seed;
             rows[round].input_block = array::from_fn(|_| F::ZERO);
         }
-        rows[round].buf = array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(buf_u8[i][j])));
+        rows[round].buf =
+            array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(buf_u8[i][j])));
 
         generate_trace_row_for_round(&mut rows[round], round);
     }
@@ -130,7 +134,8 @@ pub fn generate_trace_row_for_round<F: PrimeField32>(row: &mut ShaCols<F>, round
         )
     });
 
-    let a: [F; 4] = array::from_fn(|i| F::from_canonical_u8(t1_sum.wrapping_add(t2_sum).to_le_bytes()[i]));
+    let a: [F; 4] =
+        array::from_fn(|i| F::from_canonical_u8(t1_sum.wrapping_add(t2_sum).to_le_bytes()[i]));
 
     row.seed = [
         row.prev_seed[6],

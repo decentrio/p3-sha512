@@ -8,7 +8,7 @@ use openvm_stark_backend::{
 use p3_air::{Air, BaseAir};
 use p3_field::PrimeField32;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
-use p3_sha512::chips::byte::ByteLookupChip;
+use crate::chips::byte::ByteLookupChip;
 
 use crate::{
     bits_air::{rotr_air::RightRotateCols, sr_air::ShiftRightCols, xor_air::Xor3Cols},
@@ -218,7 +218,7 @@ pub mod tests {
         engine::{StarkEngine, StarkFriEngine},
         utils::create_seeded_rng,
     };
-    use p3_sha512::chips::byte::ByteLookupChip;
+    use crate::chips::byte::ByteLookupChip;
     use rand::Rng;
 
     use crate::bits_air::small_sig_air::{BUS_INDEX, SmallSigma0Air};
