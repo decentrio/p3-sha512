@@ -1,56 +1,64 @@
 use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_field::Field;
+use crate::{
+    builder::ChipBuilder,
+    chips::byte::{ByteLookupChip, ByteLookupOp},
+};
+
+use crate::constants::U32_LIMBS;
 
 use p3_field::FieldAlgebra;
 
-use crate::builder::ChipBuilder;
-use crate::chips::byte::ByteLookupChip;
-use crate::constants::U32_LIMBS;
-
 /// A set of columns needed to compute the add of two words.
-#[derive(Clone, Copy, Debug, Default, AlignedBorrow)]
+#[derive(Clone, Copy, Debug, AlignedBorrow)]
 #[repr(C)]
-pub struct AddGadget<T> {
+pub struct AddGadget<T, const N: usize> {
     /// The result of `a + b`.
     pub value: [T; U32_LIMBS],
 
     /// Trace.
-    pub carry: [T; 3],
+    pub is_carry: [[T; U32_LIMBS]; N],
+    /// The carry for the `n`th limb.
+    pub carry: [T; U32_LIMBS],
 }
 
-impl<F: Field> AddGadget<F> {
-    pub fn populate(&mut self, lookup: &mut ByteLookupChip, a_u32: u32, b_u32: u32) -> u32 {
-        let expected = a_u32.wrapping_add(b_u32);
+impl<F: Field, const N: usize> AddGadget<F, N> {
+    pub fn populate(&mut self, lookup: &mut ByteLookupChip, inputs_u32: [u32; N]) -> u32 {
+        let expected = inputs_u32.iter().sum::<u32>();
         self.value = expected.to_le_bytes().map(F::from_canonical_u8);
-        let a = a_u32.to_le_bytes();
-        let b = b_u32.to_le_bytes();
 
-        let mut carry = [0u8, 0u8, 0u8];
-        if (a[0] as u32) + (b[0] as u32) > 255 {
-            carry[0] = 1;
-            self.carry[0] = F::ONE;
-        }
-        if (a[1] as u32) + (b[1] as u32) + (carry[0] as u32) > 255 {
-            carry[1] = 1;
-            self.carry[1] = F::ONE;
-        }
-        if (a[2] as u32) + (b[2] as u32) + (carry[1] as u32) > 255 {
-            carry[2] = 1;
-            self.carry[2] = F::ONE;
+        let inputs = inputs_u32
+            .iter()
+            .map(|&x| x.to_le_bytes())
+            .collect::<Vec<[u8; U32_LIMBS]>>();
+
+        let base = 256;
+        let mut carry = [0u8; N];
+        for i in 0..U32_LIMBS {
+            let mut column_sum = inputs.iter().map(|input| input[i] as u32).sum::<u32>();
+            if i > 0 {
+                column_sum += carry[i - 1] as u32;
+            }
+            carry[i] = (column_sum / base) as u8;
+            self.is_carry
+                .iter_mut()
+                .enumerate()
+                .for_each(|(j, is_carry_col)| {
+                    is_carry_col[i] = F::from_bool(carry[i] == j as u8);
+                });
+            self.carry[i] = F::from_canonical_u8(carry[i]);
+            debug_assert!(carry[i] <= (N - 1) as u8);
+            debug_assert_eq!(self.value[i], F::from_canonical_u32(column_sum % base));
         }
 
-        let base = 256u32;
-        let overflow = a[0]
-            .wrapping_add(b[0])
-            .wrapping_sub(expected.to_le_bytes()[0]) as u32;
-        debug_assert_eq!(overflow.wrapping_mul(overflow.wrapping_sub(base)), 0);
-
-        // Range check
         {
-            lookup.request_u8_range_checks(a);
-            lookup.request_u8_range_checks(b);
-            lookup.request_u8_range_checks(expected.to_le_bytes());
+            let mut inputs_and_result = inputs.clone();
+            inputs_and_result.push(expected.to_le_bytes());
+
+            inputs_and_result
+                .into_iter()
+                .for_each(|bytes| lookup.request_u8_range_checks(bytes));
         }
         expected
     }
@@ -58,44 +66,56 @@ impl<F: Field> AddGadget<F> {
     pub fn eval<AB: ChipBuilder>(
         builder: &mut AB,
         lookup_bus: BusIndex,
-        a: [AB::Var; U32_LIMBS],
-        b: [AB::Var; U32_LIMBS],
-        cols: &AddGadget<AB::Var>,
+        inputs: [[AB::Var; U32_LIMBS]; N],
+        cols: &AddGadget<AB::Var, N>,
     ) {
-        let one = AB::Expr::ONE;
-        let base = AB::F::from_canonical_u32(256);
-
-        // For each limb, assert that difference between the carried result and the non-carried
-        // result is either zero or the base.
-        let overflow_0 = a[0] + b[0] - cols.value[0];
-        let overflow_1 = a[1] + b[1] - cols.value[1] + cols.carry[0];
-        let overflow_2 = a[2] + b[2] - cols.value[2] + cols.carry[1];
-        let overflow_3 = a[3] + b[3] - cols.value[3] + cols.carry[2];
-        builder.assert_zero(overflow_0.clone() * (overflow_0.clone() - base));
-        builder.assert_zero(overflow_1.clone() * (overflow_1.clone() - base));
-        builder.assert_zero(overflow_2.clone() * (overflow_2.clone() - base));
-        builder.assert_zero(overflow_3.clone() * (overflow_3.clone() - base));
-
-        // If the carry is one, then the overflow must be the base.
-        builder.assert_zero(cols.carry[0] * (overflow_0.clone() - base));
-        builder.assert_zero(cols.carry[1] * (overflow_1.clone() - base));
-        builder.assert_zero(cols.carry[2] * (overflow_2.clone() - base));
-
-        // If the carry is not one, then the overflow must be zero.
-        builder.assert_zero((cols.carry[0] - one.clone()) * overflow_0.clone());
-        builder.assert_zero((cols.carry[1] - one.clone()) * overflow_1.clone());
-        builder.assert_zero((cols.carry[2] - one.clone()) * overflow_2.clone());
-
-        // Assert that the carry is either zero or one.
-        builder.assert_bool(cols.carry[0]);
-        builder.assert_bool(cols.carry[1]);
-        builder.assert_bool(cols.carry[2]);
-
         // Range check each byte.
         {
-            builder.slice_range_check_u8(lookup_bus, &a);
-            builder.slice_range_check_u8(lookup_bus, &b);
+            inputs.iter().for_each(|bytes| {
+                builder.slice_range_check_u8(lookup_bus, bytes);
+            });
             builder.slice_range_check_u8(lookup_bus, &cols.value);
+        }
+        // Each value in is_carry_{0,1,2,3,4} is 0 or 1, and exactly one of them is 1 per digit.
+        {
+            for i in 0..U32_LIMBS {
+                let mut is_carry_sum = AB::Expr::ZERO;
+                for j in 0..N {
+                    // Assert booleanity.
+                    let is_carry = &cols.is_carry[i][j].clone();
+                    is_carry_sum = is_carry_sum + is_carry.clone();
+                    builder.assert_bool(is_carry.clone());
+                }
+                builder.assert_eq(is_carry_sum, AB::Expr::ONE);
+            }
+        }
+        // Calculates carry from is_carry_{0,1,2,...,N-1}.
+        {
+            for i in 0..U32_LIMBS {
+                builder.assert_eq(
+                    cols.carry[i],
+                    cols.is_carry.iter().enumerate().fold(AB::Expr::ZERO, |acc, (j, is_carry_col)| {
+                        acc + is_carry_col[i].clone() * AB::F::from_canonical_u32(j as u32)
+                    })
+                );             
+            }
+        }
+
+        // Compare the sum and summands by looking at carry.
+        {
+            let base = AB::F::from_canonical_u32(256);
+            for i in 0..U32_LIMBS {
+                let mut overflow = AB::Expr::ZERO;
+                for input in inputs {
+                    overflow += input[i].clone().into();
+                }
+                overflow -= cols.value[i].clone().into();
+
+                if i > 0 {
+                    overflow += cols.carry[i - 1].clone().into();
+                }
+                builder.assert_eq(cols.carry[i] * base, overflow.clone());
+            }
         }
     }
 }
