@@ -7,7 +7,7 @@ use p3_field::PrimeField32;
 use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use crate::chips::byte::ByteLookupChip;
 
-use crate::{bits_air::{rotr_air::RightRotateGadget, xor_air::Xor3Gadget}, constants::U32_LIMBS};
+use crate::{gadgets::{rotr::RightRotateGadget, xor::Xor3Gadget}, constants::U32_LIMBS};
 
 const BUS_INDEX: u16 = 10;
 

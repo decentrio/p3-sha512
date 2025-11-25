@@ -11,7 +11,7 @@ use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use crate::chips::byte::ByteLookupChip;
 
 use crate::{
-    bits_air::{rotr_air::RightRotateGadget, sr_air::ShiftRightGadget, xor_air::Xor3Gadget},
+    gadgets::{rotr::RightRotateGadget, sr::ShiftRightGadget, xor::Xor3Gadget},
     constants::U32_LIMBS,
 };
 
