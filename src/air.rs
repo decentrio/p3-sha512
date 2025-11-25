@@ -9,9 +9,16 @@ use p3_matrix::dense::RowMajorMatrix;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+use crate::bits_air::small_sig_air::{SmallSigma0Cols, SmallSigma1Cols};
+use crate::bits_air::vanilla_rotr_air::RightRotateAir;
+use crate::builder::ChipBuilder;
+use crate::chips::byte::ByteLookupChip;
 use crate::columns::{NUM_SHA_COLS, ShaCols};
 use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, U32_BITS, U32_LIMBS};
+use crate::gadgets::add::AddGadget;
 use crate::generation::generate_trace_rows;
+
+const BUS_INDEX: u16 = 10;
 
 /// Assumes the field size is at least 16 bits.
 #[derive(Debug)]
@@ -20,6 +27,7 @@ pub struct ShaAir {}
 impl ShaAir {
     pub fn generate_trace_rows<F: PrimeField32>(
         &self,
+        byte_lookup: &ByteLookupChip,
         num_hashes: usize,
         extra_capacity_bits: usize,
     ) -> RowMajorMatrix<F> {
@@ -31,7 +39,7 @@ impl ShaAir {
                 bytes
             })
             .collect();
-        generate_trace_rows(inputs, extra_capacity_bits)
+        generate_trace_rows(inputs, byte_lookup, extra_capacity_bits)
     }
 }
 
@@ -41,7 +49,7 @@ impl<F> BaseAir<F> for ShaAir {
     }
 }
 
-impl<AB: AirBuilder> Air<AB> for ShaAir {
+impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
     #[inline]
     fn eval(&self, builder: &mut AB) {
         eval_round_flags(builder);
@@ -85,27 +93,58 @@ impl<AB: AirBuilder> Air<AB> for ShaAir {
         for i in 0..NUM_ROUNDS {
             if i < 16 {
                 // assert all values in buf from 0 to 16 is equal to input block little endian
-
                 for ele in local.buf[i] {
                     builder.assert_bool(ele);
                 }
 
-                for j in 0..16 {
+                for j in 0..U32_LIMBS {
                     builder.assert_zero(
                         local.buf[i][j].clone() - local.input_block[i * 4 + j].clone(),
                     );
                 }
                 
             } else {
-                // TODO: right rotate air
-                // builder.assert_zeros::<48, _>(array::from_fn( | j | {
-                //     let v1 = &local.buf[i-2].iter().enumerate().fold(AB::Expr::ZERO, |acc, (i, x)|  {
-                //         acc + x.clone().into() * AB::Expr::from_u32(1 << (i * 8))
-                //     });
+                let v1 = [
+                    local.buf[i - 2][0].clone().into(),
+                    local.buf[i - 2][1].clone().into(),
+                    local.buf[i - 2][2].clone().into(),
+                    local.buf[i - 2][3].clone().into(),
+                ];
+                SmallSigma1Cols::<AB::F>::eval::<AB>(
+                    builder,
+                    BUS_INDEX,
+                    v1,
+                    local.small_sig1[i - 16].borrow(),
+                );
+                let v2 = [
+                    local.buf[i - 15][0].clone().into(),
+                    local.buf[i - 15][1].clone().into(),
+                    local.buf[i - 15][2].clone().into(),
+                    local.buf[i - 15][3].clone().into(),
+                ];
+                SmallSigma0Cols::<AB::F>::eval::<AB>(
+                    builder,
+                    BUS_INDEX,
+                    v2,
+                    local.small_sig0[i - 16].borrow(),
+                );
 
-                // }));
+                let add_input = [
+                    local.small_sig1[i - 16].xor3.value,
+                    local.buf[i - 7],
+                    local.small_sig0[i - 16].xor3.value,
+                    local.buf[i - 16],
+                ];
+                AddGadget::<AB::F, 4>::eval::<AB>(
+                    builder,
+                    BUS_INDEX,
+                    add_input,
+                    &local.add_small_sig[i - 16],
+                );
             }
         }
+
+        
     }
 }
 

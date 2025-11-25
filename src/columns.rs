@@ -1,9 +1,9 @@
 use core::borrow::{Borrow, BorrowMut};
-use core::mem::{size_of, transmute};
+use core::mem::{size_of};
 
-use p3_util::indices_arr;
-
+use crate::bits_air::small_sig_air::{SmallSigma0Cols, SmallSigma1Cols};
 use crate::constants::{NUM_ROUNDS, U32_LIMBS};
+use crate::gadgets::add::AddGadget;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -20,6 +20,9 @@ pub struct ShaCols<T> {
     pub final_hash: [[T; U32_LIMBS]; 8],
     pub extend: [[T; U32_LIMBS]; 64],
     pub buf: [[T; U32_LIMBS]; 64],
+    pub small_sig0: [SmallSigma0Cols<T>; 48],
+    pub small_sig1: [SmallSigma1Cols<T>; 48],
+    pub add_small_sig: [AddGadget<T, 4>; 48],
 }
 
 pub const NUM_SHA_COLS: usize = size_of::<ShaCols<u8>>();

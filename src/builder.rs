@@ -57,8 +57,8 @@ where
 {
     fn slice_range_check_u8(
         &mut self,
-        lookup_bus: BusIndex,
-        input: &[impl Into<Self::Expr> + Clone],
+        _lookup_bus: BusIndex,
+        _input: &[impl Into<Self::Expr> + Clone],
         // mult: impl Into<Self::Expr> + Clone,
     ) {
         // Skip for debug builder?

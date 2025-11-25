@@ -1,169 +1,108 @@
-use std::{array, borrow::Borrow};
-
+use crate::{chips::byte::ByteLookupChip, gadgets::{rotr::RightRotateGadget, xor::Xor3Gadget}};
 use derive::AlignedBorrow;
-use openvm_stark_backend::{interaction::InteractionBuilder, rap::{BaseAirWithPublicValues, PartitionedBaseAir}};
-use p3_air::{Air, BaseAir};
+use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_field::PrimeField32;
-use p3_matrix::{Matrix, dense::RowMajorMatrix};
-use crate::chips::byte::ByteLookupChip;
-
-use crate::{gadgets::{rotr::RightRotateGadget, xor::Xor3Gadget}, constants::U32_LIMBS};
-
-const BUS_INDEX: u16 = 10;
 
 #[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
-pub struct BigSigmaCols<T> {
-    pub input: [T; U32_LIMBS],
+pub struct BigSigma0Cols<T> {
     pub rrots: [RightRotateGadget<T>; 3],
     pub xor3: Xor3Gadget<T>,
 }
 
-pub const NUM_BIG_SIGMA_COLS: usize = size_of::<BigSigmaCols<u8>>();
+pub const NUM_BIG_SIGMA_0_COLS: usize = size_of::<BigSigma0Cols<u8>>();
 
+impl<F: PrimeField32> BigSigma0Cols<F> {
+    pub fn populate(&mut self, byte_lookup: &ByteLookupChip, input: u32) -> u32 {
+        let x = self.rrots[0].populate(byte_lookup, input, 2);
+        let y = self.rrots[1].populate(byte_lookup, input, 13);
+        let z = self.rrots[2].populate(byte_lookup, input, 22);
 
-#[derive(Debug)]
-pub struct BigSigma0Air {
-}
-
-impl BigSigma0Air {
-    pub fn generate_trace_rows<F: PrimeField32>(
-        &self,
-        byte_lookup: &ByteLookupChip,
-        input: u32,
-        extra_capacity_bits: usize,
-    ) -> RowMajorMatrix<F> {
-        let trace_length = NUM_BIG_SIGMA_COLS;
-        let mut long_trace = F::zero_vec(trace_length << extra_capacity_bits);
-        long_trace.truncate(trace_length);
-
-        let mut trace = RowMajorMatrix::new(long_trace, NUM_BIG_SIGMA_COLS);
-        let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<BigSigmaCols<F>>() };
-        assert!(prefix.is_empty(), "Alignment should match");
-        assert!(suffix.is_empty(), "Alignment should match");
-        assert_eq!(rows.len(), 1);
-
-        generate_sig0_trace_rows(&mut rows[0], byte_lookup, input);
-        trace
+        self.xor3.populate(byte_lookup, x, y, z)
     }
-}
 
-impl<F> BaseAir<F> for BigSigma0Air {
-    fn width(&self) -> usize {
-        NUM_BIG_SIGMA_COLS
-    }
-}
-
-impl<F> BaseAirWithPublicValues<F> for BigSigma0Air {}
-
-impl<F> PartitionedBaseAir<F> for BigSigma0Air {}
-
-impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for BigSigma0Air {
-    #[inline]
-    fn eval(&self, builder: &mut AB) {
-        let main = builder.main();
-        let local = main.row_slice(0);
-        let local: &BigSigmaCols<AB::Var> = (*local).borrow();
-
-        
+    pub fn eval<AB: InteractionBuilder<F: PrimeField32>>(
+        builder: &mut AB,
+        lookup_bus: BusIndex,
+        input: impl IntoIterator<Item = impl Into<AB::Expr>>,
+        cols: &BigSigma0Cols<AB::Var>,
+    ) {
+        let mut input_iter = input.into_iter();
         let input = [
-            local.input[0].into(),
-            local.input[1].into(),
-            local.input[2].into(),
-            local.input[3].into(),
+            input_iter.next().unwrap().into(),
+            input_iter.next().unwrap().into(),
+            input_iter.next().unwrap().into(),
+            input_iter.next().unwrap().into(),
         ];
-        RightRotateGadget::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 2, &local.rrots[0]);
-        RightRotateGadget::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 13, &local.rrots[1]);
-        RightRotateGadget::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 22, &local.rrots[2]);
-        Xor3Gadget::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.rrots[2].value, &local.xor3);
+
+        RightRotateGadget::<AB::F>::eval::<AB>(builder, lookup_bus, input.clone(), 2, &cols.rrots[0]);
+        RightRotateGadget::<AB::F>::eval::<AB>(
+            builder,
+            lookup_bus,
+            input.clone(),
+            13,
+            &cols.rrots[1],
+        );
+        RightRotateGadget::<AB::F>::eval(builder, lookup_bus, input.clone(), 22, &cols.rrots[2]);
+        Xor3Gadget::<AB::F>::eval(
+            builder,
+            lookup_bus,
+            cols.rrots[0].value,
+            cols.rrots[1].value,
+            cols.rrots[2].value,
+            &cols.xor3,
+        );
     }
 }
 
-
-fn generate_sig0_trace_rows<F: PrimeField32>(
-    row: &mut BigSigmaCols<F>,
-    byte_lookup: &ByteLookupChip,
-    input: u32,
-) {
-    let input_bytes = input.to_le_bytes();
-    row.input = array::from_fn(| i | F::from_canonical_u8(input_bytes[i]));
-
-    let x = row.rrots[0].populate(byte_lookup, input, 2);
-    let y = row.rrots[1].populate(byte_lookup, input, 13);
-    let z = row.rrots[2].populate(byte_lookup, input, 22);
-
-    row.xor3.populate(byte_lookup, x, y, z);
+#[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
+#[repr(C)]
+pub struct BigSigma1Cols<T> {
+    pub rrots: [RightRotateGadget<T>; 3],
+    pub xor3: Xor3Gadget<T>,
 }
 
+pub const NUM_BIG_SIGMA_1_COLS: usize = size_of::<BigSigma1Cols<u8>>();
 
-#[derive(Debug)]
-pub struct BigSigma1Air {
-}
+impl<F: PrimeField32> BigSigma1Cols<F> {
+    pub fn populate(&mut self, byte_lookup: &ByteLookupChip, input: u32) -> u32 {
+        let x = self.rrots[0].populate(byte_lookup, input, 6);
+        let y = self.rrots[1].populate(byte_lookup, input, 11);
+        let z = self.rrots[2].populate(byte_lookup, input, 25);
 
-impl BigSigma1Air {
-    pub fn generate_trace_rows<F: PrimeField32>(
-        &self,
-        byte_lookup: &ByteLookupChip,
-        input: u32,
-        extra_capacity_bits: usize,
-    ) -> RowMajorMatrix<F> {
-        let trace_length = NUM_BIG_SIGMA_COLS;
-        let mut long_trace = F::zero_vec(trace_length << extra_capacity_bits);
-        long_trace.truncate(trace_length);
-
-        let mut trace = RowMajorMatrix::new(long_trace, NUM_BIG_SIGMA_COLS);
-        let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<BigSigmaCols<F>>() };
-        assert!(prefix.is_empty(), "Alignment should match");
-        assert!(suffix.is_empty(), "Alignment should match");
-        assert_eq!(rows.len(), 1);
-
-        generate_sig1_trace_rows(&mut rows[0], byte_lookup, input);
-        trace
+        self.xor3.populate(byte_lookup, x, y, z)
     }
-}
 
-impl<F> BaseAir<F> for BigSigma1Air {
-    fn width(&self) -> usize {
-        NUM_BIG_SIGMA_COLS
-    }
-}
-
-impl<F> BaseAirWithPublicValues<F> for BigSigma1Air {}
-
-impl<F> PartitionedBaseAir<F> for BigSigma1Air {}
-
-impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for BigSigma1Air {
-    #[inline]
-    fn eval(&self, builder: &mut AB) {
-        let main = builder.main();
-        let local = main.row_slice(0);
-        let local: &BigSigmaCols<AB::Var> = (*local).borrow();
-
+    pub fn eval<AB: InteractionBuilder<F: PrimeField32>>(
+        builder: &mut AB,
+        lookup_bus: BusIndex,
+        input: impl IntoIterator<Item = impl Into<AB::Expr>>,
+        cols: &BigSigma1Cols<AB::Var>,
+    ) {
+        let mut input_iter = input.into_iter();
         let input = [
-            local.input[0].into(),
-            local.input[1].into(),
-            local.input[2].into(),
-            local.input[3].into(),
+            input_iter.next().unwrap().into(),
+            input_iter.next().unwrap().into(),
+            input_iter.next().unwrap().into(),
+            input_iter.next().unwrap().into(),
         ];
-        RightRotateGadget::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 6, &local.rrots[0]);
-        RightRotateGadget::<AB::F>::eval::<AB>(builder, BUS_INDEX, input.clone(), 11, &local.rrots[1]);
-        RightRotateGadget::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 25, &local.rrots[2]);
-        Xor3Gadget::<AB::F>::eval(builder, BUS_INDEX, local.rrots[0].value, local.rrots[1].value, local.rrots[2].value, &local.xor3);
+
+        RightRotateGadget::<AB::F>::eval::<AB>(builder, lookup_bus, input.clone(), 6, &cols.rrots[0]);
+        RightRotateGadget::<AB::F>::eval::<AB>(
+            builder,
+            lookup_bus,
+            input.clone(),
+            11,
+            &cols.rrots[1],
+        );
+        RightRotateGadget::<AB::F>::eval(builder, lookup_bus, input.clone(), 25, &cols.rrots[2]);
+        Xor3Gadget::<AB::F>::eval(
+            builder,
+            lookup_bus,
+            cols.rrots[0].value,
+            cols.rrots[1].value,
+            cols.rrots[2].value,
+            &cols.xor3,
+        );
     }
-}
-
-
-fn generate_sig1_trace_rows<F: PrimeField32>(
-    row: &mut BigSigmaCols<F>,
-    byte_lookup: &ByteLookupChip,
-    input: u32,
-) {
-    let input_bytes = input.to_le_bytes();
-    row.input = array::from_fn(| i | F::from_canonical_u8(input_bytes[i]));
-
-    let x = row.rrots[0].populate(byte_lookup, input, 6);
-    let y = row.rrots[1].populate(byte_lookup, input, 11);
-    let z = row.rrots[2].populate(byte_lookup, input, 25);
-
-    row.xor3.populate(byte_lookup, x, y, z);
 }

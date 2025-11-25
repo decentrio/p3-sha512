@@ -1,19 +1,16 @@
-use core::mem::transmute;
-use std::{array, iter::repeat_n, vec};
+use std::{array, iter::repeat_n};
 
-use p3_air::utils::u32_to_bits_le;
 use p3_field::PrimeField32;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 
 use crate::{
-    columns::{NUM_SHA_COLS, ShaCols},
-    constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS},
-    utils::{big_sig1, ch, limbs_into_u32, maj},
+    chips::byte::ByteLookupChip, columns::{NUM_SHA_COLS, ShaCols}, constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS}, utils::{big_sig1, ch, limbs_into_u32, maj}
 };
 
 pub fn generate_trace_rows<F: PrimeField32>(
     inputs: Vec<[u8; 64]>,
+    byte_lookup: &ByteLookupChip,
     extra_capacity_bits: usize,
 ) -> RowMajorMatrix<F> {
     let num_rows = (inputs.len() * NUM_ROUNDS).next_power_of_two();
@@ -37,7 +34,7 @@ pub fn generate_trace_rows<F: PrimeField32>(
     rows.par_chunks_mut(NUM_ROUNDS)
         .zip(padded_inputs)
         .for_each(|(row, input)| {
-            generate_trace_rows_for_block(row, input);
+            generate_trace_rows_for_block(row, byte_lookup, input);
         });
 
     trace
@@ -45,6 +42,7 @@ pub fn generate_trace_rows<F: PrimeField32>(
 
 pub fn generate_trace_rows_for_block<F: PrimeField32>(
     rows: &mut [ShaCols<F>],
+    byte_lookup: &ByteLookupChip,
     input_block: [u8; 64],
 ) {
     rows[0].input_block = array::from_fn(|i| F::from_canonical_u8(input_block[i]));
@@ -59,12 +57,18 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
         } else {
             let v1 = buf[i - 2];
             let t1 = v1.rotate_right(17) ^ v1.rotate_right(19) ^ (v1 >> 10);
+            rows[i].small_sig1[i-16].populate(byte_lookup, v1);
             let v2 = buf[i - 15];
             let t2 = v2.rotate_right(7) ^ v2.rotate_right(18) ^ (v2 >> 3);
+            rows[i].small_sig0[i-16].populate(byte_lookup, v2);
             buf[i] = t1
                 .wrapping_add(buf[i - 7])
                 .wrapping_add(t2)
                 .wrapping_add(buf[i - 16]);
+            rows[i].add_small_sig[i-16].populate(
+                byte_lookup,
+                [t1, buf[i - 7], t2, buf[i - 16]],
+            );
         }
     }
 
