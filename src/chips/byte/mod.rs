@@ -129,7 +129,7 @@ impl ByteLookupChip {
         }
     }
 
-    pub fn request_u8_range_checks(&mut self, bytes: impl IntoIterator<Item = u8>) {
+    pub fn request_u8_range_checks(&self, bytes: impl IntoIterator<Item = u8>) {
         for mut pair in &bytes.into_iter().chunks(2) {
             let b = pair.next().unwrap();
             let c = pair.next().unwrap_or_default();
