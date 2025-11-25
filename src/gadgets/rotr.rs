@@ -10,7 +10,7 @@ use crate::constants::U32_LIMBS;
 
 #[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
-pub struct RightRotateCols<T> {
+pub struct RightRotateGadget<T> {
     /// The output value.
     pub value: [T; U32_LIMBS],
 
@@ -21,9 +21,9 @@ pub struct RightRotateCols<T> {
     pub carry: [T; U32_LIMBS],
 }
 
-pub const NUM_RIGHT_ROTATE_COLS: usize = size_of::<RightRotateCols<u8>>();
+pub const NUM_RIGHT_ROTATE_COLS: usize = size_of::<RightRotateGadget<u8>>();
 
-impl<F: PrimeField32> RightRotateCols<F> {
+impl<F: PrimeField32> RightRotateGadget<F> {
     pub const fn nb_bytes_to_shift(rotation: usize) -> usize {
         rotation / 8
     }
@@ -94,7 +94,7 @@ impl<F: PrimeField32> RightRotateCols<F> {
         lookup_bus: BusIndex,
         input: [AB::Expr; 4],
         rotation: usize,
-        cols: &RightRotateCols<AB::Var>,
+        cols: &RightRotateGadget<AB::Var>,
     ) {
         // Compute some constants with respect to the rotation needed for the rotation.
         let nb_bytes_to_shift = Self::nb_bytes_to_shift(rotation);
@@ -147,7 +147,6 @@ impl<F: PrimeField32> RightRotateCols<F> {
 }
 
 pub mod tests {
-    use crate::bits_air::rotr_air::{NUM_RIGHT_ROTATE_COLS, RightRotateCols};
     use core::borrow::Borrow;
     use openvm_stark_backend::engine::StarkEngine;
     use openvm_stark_backend::rap::{BaseAirWithPublicValues, PartitionedBaseAir};
@@ -177,6 +176,7 @@ pub mod tests {
     use p3_monty_31::dft::RecursiveDft;
     use p3_sha256::Sha256;
     use crate::chips::byte::ByteLookupChip;
+    use crate::gadgets::rotr::{NUM_RIGHT_ROTATE_COLS, RightRotateGadget};
     use p3_symmetric::{
         CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher32, TruncatedPermutation,
     };
@@ -219,7 +219,7 @@ pub mod tests {
 
             let mut trace = RowMajorMatrix::new(long_trace, NUM_RIGHT_ROTATE_COLS);
             let (prefix, rows, suffix) =
-                unsafe { trace.values.align_to_mut::<RightRotateCols<F>>() };
+                unsafe { trace.values.align_to_mut::<RightRotateGadget<F>>() };
             assert!(prefix.is_empty(), "Alignment should match");
             assert!(suffix.is_empty(), "Alignment should match");
             assert_eq!(rows.len(), num_rows);
@@ -248,9 +248,9 @@ pub mod tests {
         fn eval(&self, builder: &mut AB) {
             let main = builder.main();
             let local = main.row_slice(0);
-            let local: &RightRotateCols<AB::Var> = (*local).borrow();
+            let local: &RightRotateGadget<AB::Var> = (*local).borrow();
             let input = self.input.to_le_bytes().map(AB::Expr::from_canonical_u8);
-            RightRotateCols::<AB::F>::eval::<AB>(
+            RightRotateGadget::<AB::F>::eval::<AB>(
                 builder,
                 BYTE_XOR_BUS,
                 input,

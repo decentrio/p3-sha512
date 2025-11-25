@@ -10,15 +10,15 @@ use crate::constants::U32_LIMBS;
 
 #[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
-pub struct Xor3Cols<T> {
+pub struct Xor3Gadget<T> {
     /// The result of `x ^ y`.
     pub xor_xy: [T; U32_LIMBS],
     /// The final result.
     pub value: [T; U32_LIMBS],
 }
-pub const NUM_XOR_COLS: usize = size_of::<Xor3Cols<u8>>();
+pub const NUM_XOR_COLS: usize = size_of::<Xor3Gadget<u8>>();
 
-impl<F: PrimeField32> Xor3Cols<F> {
+impl<F: PrimeField32> Xor3Gadget<F> {
     pub fn populate(&mut self, lookup: &ByteLookupChip, x: u32, y: u32, z: u32) -> u32 {
         let expected = x ^ y ^ z;
         let x_bytes = x.to_le_bytes();
@@ -40,7 +40,7 @@ impl<F: PrimeField32> Xor3Cols<F> {
         x: impl IntoIterator<Item = impl Into<AB::Expr>>,
         y: impl IntoIterator<Item = impl Into<AB::Expr>>,
         z: impl IntoIterator<Item = impl Into<AB::Expr>>,
-        cols: &Xor3Cols<AB::Var>,
+        cols: &Xor3Gadget<AB::Var>,
     ) {
         let mut x_iter = x.into_iter();
         let mut y_iter = y.into_iter();

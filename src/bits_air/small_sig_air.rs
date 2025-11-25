@@ -11,7 +11,7 @@ use p3_matrix::{Matrix, dense::RowMajorMatrix};
 use crate::chips::byte::ByteLookupChip;
 
 use crate::{
-    bits_air::{rotr_air::RightRotateCols, sr_air::ShiftRightCols, xor_air::Xor3Cols},
+    gadgets::{rotr::RightRotateGadget, sr::ShiftRightGadget, xor::Xor3Gadget},
     constants::U32_LIMBS,
 };
 
@@ -21,9 +21,9 @@ const BUS_INDEX: u16 = 10;
 #[repr(C)]
 pub struct SmallSigmaCols<T> {
     pub input: [T; U32_LIMBS],
-    pub rrots: [RightRotateCols<T>; 2],
-    pub sr: ShiftRightCols<T>,
-    pub xor3: Xor3Cols<T>,
+    pub rrots: [RightRotateGadget<T>; 2],
+    pub sr: ShiftRightGadget<T>,
+    pub xor3: Xor3Gadget<T>,
 }
 
 pub const NUM_SMALL_SIGMA_COLS: usize = size_of::<SmallSigmaCols<u8>>();
@@ -76,22 +76,22 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma0Air {
             local.input[2].into(),
             local.input[3].into(),
         ];
-        RightRotateCols::<AB::F>::eval::<AB>(
+        RightRotateGadget::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
             input.clone(),
             7,
             &local.rrots[0],
         );
-        RightRotateCols::<AB::F>::eval::<AB>(
+        RightRotateGadget::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
             input.clone(),
             18,
             &local.rrots[1],
         );
-        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 3, &local.sr);
-        Xor3Cols::<AB::F>::eval(
+        ShiftRightGadget::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 3, &local.sr);
+        Xor3Gadget::<AB::F>::eval(
             builder,
             BUS_INDEX,
             local.rrots[0].value,
@@ -165,22 +165,22 @@ impl<AB: InteractionBuilder<F: PrimeField32>> Air<AB> for SmallSigma1Air {
             local.input[2].into(),
             local.input[3].into(),
         ];
-        RightRotateCols::<AB::F>::eval::<AB>(
+        RightRotateGadget::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
             input.clone(),
             7,
             &local.rrots[0],
         );
-        RightRotateCols::<AB::F>::eval::<AB>(
+        RightRotateGadget::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
             input.clone(),
             18,
             &local.rrots[1],
         );
-        ShiftRightCols::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 3, &local.sr);
-        Xor3Cols::<AB::F>::eval(
+        ShiftRightGadget::<AB::F>::eval(builder, BUS_INDEX, input.clone(), 3, &local.sr);
+        Xor3Gadget::<AB::F>::eval(
             builder,
             BUS_INDEX,
             local.rrots[0].value,

@@ -10,7 +10,7 @@ use crate::constants::U32_LIMBS;
 
 #[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
-pub struct ShiftRightCols<T> {
+pub struct ShiftRightGadget<T> {
     /// The output value.
     pub value: [T; U32_LIMBS],
 
@@ -21,9 +21,9 @@ pub struct ShiftRightCols<T> {
     pub carry: [T; U32_LIMBS],
 }
 
-pub const NUM_SHIFT_RIGHT_COLS: usize = size_of::<ShiftRightCols<u8>>();
+pub const NUM_SHIFT_RIGHT_COLS: usize = size_of::<ShiftRightGadget<u8>>();
 
-impl<F: PrimeField32> ShiftRightCols<F> {
+impl<F: PrimeField32> ShiftRightGadget<F> {
     pub const fn nb_bytes_to_shift(rotation: usize) -> usize {
         rotation / 8
     }
@@ -94,7 +94,7 @@ impl<F: PrimeField32> ShiftRightCols<F> {
         lookup_bus: BusIndex,
         input: [AB::Expr; 4],
         rotation: usize,
-        cols: &ShiftRightCols<AB::Var>,
+        cols: &ShiftRightGadget<AB::Var>,
     ) {
         // Compute some constants with respect to the rotation needed for the rotation.
         let nb_bytes_to_shift = Self::nb_bytes_to_shift(rotation);
