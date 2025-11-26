@@ -2,7 +2,7 @@ use derive::AlignedBorrow;
 use openvm_stark_backend::interaction::{BusIndex, InteractionBuilder};
 use p3_field::{PrimeField32, FieldAlgebra};
 
-use crate::{bits_air::xor_air::Xor3Cols, chips::byte::{ByteLookupChip, ByteLookupOp}, constants::U32_LIMBS, utils::maj};
+use crate::{chips::byte::{ByteLookupChip, ByteLookupOp}, constants::U32_LIMBS, gadgets::xor::Xor3Gadget, utils::maj};
 
 #[derive(Default, Debug, Clone, Copy, AlignedBorrow)]
 #[repr(C)]
@@ -10,7 +10,7 @@ pub struct MajorCols<T> {
     pub and_xy: [T; U32_LIMBS],
     pub and_xz: [T; U32_LIMBS],
     pub and_yz: [T; U32_LIMBS],
-    pub xor3: Xor3Cols<T>,
+    pub xor3: Xor3Gadget<T>,
 }
 
 pub const NUM_MAJOR_COLS: usize = size_of::<MajorCols<u8>>();
@@ -81,6 +81,6 @@ impl<F: PrimeField32> MajorCols<F> {
             builder.push_interaction(lookup_bus, interaction_data, AB::Expr::ONE, 1);
         }
 
-        Xor3Cols::<F>::eval(builder, lookup_bus, cols.and_xy, cols.and_xz, cols.and_yz, &cols.xor3);
+        Xor3Gadget::<F>::eval(builder, lookup_bus, cols.and_xy, cols.and_xz, cols.and_yz, &cols.xor3);
     }
 }

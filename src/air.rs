@@ -9,12 +9,15 @@ use p3_matrix::dense::RowMajorMatrix;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+use crate::bits_air::big_sig_air::{BigSigma0Cols, BigSigma1Cols};
+use crate::bits_air::ch_air::ChooseCols;
+use crate::bits_air::maj_air::MajorCols;
 use crate::bits_air::small_sig_air::{SmallSigma0Cols, SmallSigma1Cols};
 use crate::bits_air::vanilla_rotr_air::RightRotateAir;
 use crate::builder::ChipBuilder;
 use crate::chips::byte::ByteLookupChip;
 use crate::columns::{NUM_SHA_COLS, ShaCols};
-use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, U32_BITS, U32_LIMBS};
+use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_K, U32_BITS, U32_LIMBS};
 use crate::gadgets::add::AddGadget;
 use crate::generation::generate_trace_rows;
 
@@ -65,20 +68,23 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
         let not_final_step = AB::Expr::ONE - final_step;
 
         // If this is not the first step, assert all value in input_block must be zero.
-
         for i in 0..64 {
             builder
                 .when(not_first_step.clone())
                 .assert_zero(local.input_block[i].clone());
         }
 
-        // If this is not the final step, the local seed and next prev_seed must match.
-        for i in 0..NUM_ROUNDS {
+        for i in 0..8 {
             for j in 0..U32_LIMBS {
+                // If this is not the final step, the local seed and next prev_seed must match.
+                builder
+                    .when_transition()
+                    .when(not_final_step.clone())
+                    .assert_zero(local.seed[i][j].clone() - next.prev_seed[i][j].clone());
+                // If this is not the final step, the final hash must be zeros.
                 builder
                     .when(not_final_step.clone())
-                    .when_transition()
-                    .assert_zero(local.seed[i][j].clone() - next.prev_seed[i][j].clone());
+                    .assert_zero(local.final_hash[i][j]);
             }
         }
 
@@ -94,16 +100,16 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
             if i < 16 {
                 // assert all values in buf from 0 to 16 is equal to input block little endian
                 for ele in local.buf[i] {
-                    builder.assert_bool(ele);
+                    builder.when(local.first_16_steps.clone()).assert_bool(ele);
                 }
 
                 for j in 0..U32_LIMBS {
-                    builder.assert_zero(
+                    builder.when(local.first_16_steps.clone()).assert_zero(
                         local.buf[i][j].clone() - local.input_block[i * 4 + j].clone(),
                     );
                 }
-                
             } else {
+                // TODO: constraint first row
                 let v1 = [
                     local.buf[i - 2][0].clone().into(),
                     local.buf[i - 2][1].clone().into(),
@@ -114,7 +120,7 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
                     builder,
                     BUS_INDEX,
                     v1,
-                    local.small_sig1[i - 16].borrow(),
+                    local.small_sig1.borrow(),
                 );
                 let v2 = [
                     local.buf[i - 15][0].clone().into(),
@@ -126,25 +132,77 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
                     builder,
                     BUS_INDEX,
                     v2,
-                    local.small_sig0[i - 16].borrow(),
+                    local.small_sig0.borrow(),
                 );
 
                 let add_input = [
-                    local.small_sig1[i - 16].xor3.value,
+                    local.small_sig1.xor3.value,
                     local.buf[i - 7],
-                    local.small_sig0[i - 16].xor3.value,
+                    local.small_sig0.xor3.value,
                     local.buf[i - 16],
                 ];
                 AddGadget::<AB::F, 4>::eval::<AB>(
                     builder,
                     BUS_INDEX,
                     add_input,
-                    &local.add_small_sig[i - 16],
+                    &local.sum_small_sig,
                 );
+                for j in 0..U32_LIMBS {
+                    builder.when(AB::Expr::ONE - local.first_16_steps).assert_eq(
+                        local.buf[i][j].clone(),
+                        local.sum_small_sig.value[j].clone(),
+                    );
+                }
             }
         }
 
-        
+        BigSigma1Cols::<AB::F>::eval::<AB>(
+            builder, 
+            BUS_INDEX, 
+            local.prev_seed[4], 
+            local.big_sig1.borrow()
+        );
+
+        ChooseCols::<AB::F>::eval::<AB>(
+            builder, 
+            BUS_INDEX, 
+            local.prev_seed[4], 
+            local.prev_seed[5], 
+            local.prev_seed[6],
+            local.ch.borrow()
+        );
+
+        BigSigma0Cols::<AB::F>::eval::<AB>(
+            builder, 
+            BUS_INDEX, 
+            local.prev_seed[0], 
+            local.big_sig0.borrow()
+        );
+
+        MajorCols::<AB::F>::eval::<AB>(
+            builder, 
+            BUS_INDEX, 
+            local.prev_seed[0], 
+            local.prev_seed[1], 
+            local.prev_seed[2],
+            local.maj.borrow()
+        );
+
+        for i in 0..NUM_ROUNDS {
+            // TODO: Add gadget with choosen round
+            // let t1 = [
+            //     local.prev_seed[7],
+            //     local.big_sig1.xor3.value,
+            //     local.ch.value,
+            //     AB::Expr::from_canonical_u32(SHA256_K[])
+            // ]
+            // AddGadget::<AB::F, 5>::eval::<AB>(
+            //     builder, 
+            //     BUS_INDEX, 
+            //     t1, 
+            //     cols
+            // );
+        }
     }
 }
 
@@ -181,9 +239,9 @@ pub(crate) fn eval_round_flags<AB: AirBuilder>(builder: &mut AB) {
     // This ensures that exactly one flag "moves forward" each step in a cyclic manner.
 
     for i in 0..NUM_ROUNDS {
-        builder
-            .when_transition()
-            .assert_zero(local.step_flags[i].clone() - next.step_flags[(i + 1) % NUM_ROUNDS].clone());
+        builder.when_transition().assert_zero(
+            local.step_flags[i].clone() - next.step_flags[(i + 1) % NUM_ROUNDS].clone(),
+        );
     }
 }
 
