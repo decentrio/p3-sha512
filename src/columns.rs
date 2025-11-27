@@ -5,7 +5,7 @@ use crate::bits_air::big_sig_air::{BigSigma0Cols, BigSigma1Cols};
 use crate::bits_air::ch_air::ChooseCols;
 use crate::bits_air::maj_air::MajorCols;
 use crate::bits_air::small_sig_air::{SmallSigma0Cols, SmallSigma1Cols};
-use crate::constants::{NUM_ROUNDS, U32_LIMBS};
+use crate::constants::{NUM_ROUNDS, SHA256_ROUND_VAR_CNT, U32_LIMBS};
 use crate::gadgets::add::AddGadget;
 
 #[derive(Debug)]
@@ -17,6 +17,7 @@ pub struct ShaCols<T> {
     // pub is_round: T,
     // pub is_digest: T,
     // pub is_last_block:T,
+    pub round_idx: [T; SHA256_ROUND_VAR_CNT],
 
     pub input_block: [T; 64],
     pub prev_seed: [[T; U32_LIMBS]; 8],

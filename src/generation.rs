@@ -5,14 +5,14 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 
 use crate::{
-    chips::byte::ByteLookupChip,
-    columns::{NUM_SHA_COLS, ShaCols},
-    constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS},
-    utils::{big_sig0, big_sig1, ch, limbs_into_u32, maj},
+    chips::byte::ByteLookupChip, columns::{NUM_SHA_COLS, ShaCols}, constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS}, encoder::encoder::Encoder, utils::{big_sig0, big_sig1, ch, limbs_into_u32, maj}
 };
+
+use crate::utils::get_flag_pt_array;
 
 pub fn generate_trace_rows<F: PrimeField32>(
     inputs: Vec<[u8; 64]>,
+    encoder: &Encoder,
     byte_lookup: &ByteLookupChip,
     extra_capacity_bits: usize,
 ) -> RowMajorMatrix<F> {
@@ -37,7 +37,7 @@ pub fn generate_trace_rows<F: PrimeField32>(
     rows.par_chunks_mut(NUM_ROUNDS)
         .zip(padded_inputs)
         .for_each(|(row, input)| {
-            generate_trace_rows_for_block(row, byte_lookup, input);
+            generate_trace_rows_for_block(row, encoder, byte_lookup, input);
         });
 
     trace
@@ -45,6 +45,7 @@ pub fn generate_trace_rows<F: PrimeField32>(
 
 pub fn generate_trace_rows_for_block<F: PrimeField32>(
     rows: &mut [ShaCols<F>],
+    encoder: &Encoder,
     byte_lookup: &ByteLookupChip,
     input_block: [u8; 64],
 ) {
@@ -90,14 +91,14 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
         rows[round].buf =
             array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(buf_u8[i][j])));
 
-        generate_trace_row_for_round(&mut rows[round], byte_lookup, round);
+        generate_trace_row_for_round(&mut rows[round], encoder, byte_lookup, round);
     }
 
     rows[NUM_ROUNDS_MIN_1].final_hash = array::from_fn(|i| {
         array::from_fn(|j| {
             let x_32 = limbs_into_u32(rows[NUM_ROUNDS_MIN_1].seed.map(|f| f[j].as_canonical_u32()));
             let y_32 = limbs_into_u32(rows[0].prev_seed.map(|f| f[j].as_canonical_u32()));
-            F::from_canonical_u8(x_32.wrapping_add(y_32).to_le_bytes()[i])
+            F::from_canonical_u8(rows[NUM_ROUNDS_MIN_1].sum_final[j].populate(byte_lookup, [x_32, y_32]).to_le_bytes()[i])
         })
     });
 }
@@ -105,6 +106,7 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
 // permute
 pub fn generate_trace_row_for_round<F: PrimeField32>(
     row: &mut ShaCols<F>,
+    encoder: &Encoder,
     byte_lookup: &ByteLookupChip,
     round: usize,
 ) {
@@ -113,7 +115,7 @@ pub fn generate_trace_row_for_round<F: PrimeField32>(
         row.first_16_steps = F::ONE
     }
     row.final_hash = array::from_fn(|_| array::from_fn(|_| F::ZERO));
-
+    row.round_idx = get_flag_pt_array(encoder, round).map(F::from_canonical_u32);
     let t1 = [
         limbs_into_u32(row.prev_seed[7].map(|f| f.as_canonical_u32())),
         row.big_sig1.populate(

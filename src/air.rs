@@ -2,6 +2,7 @@ use core::array;
 use core::borrow::Borrow;
 use std::ops::Add;
 
+use openvm_stark_backend::rap::{BaseAirWithPublicValues, PartitionedBaseAir};
 use p3_air::{Air, AirBuilder, BaseAir};
 use p3_field::{Field, FieldAlgebra, FieldArray, PrimeField, PrimeField32};
 use p3_matrix::Matrix;
@@ -17,7 +18,9 @@ use crate::bits_air::vanilla_rotr_air::RightRotateAir;
 use crate::builder::ChipBuilder;
 use crate::chips::byte::ByteLookupChip;
 use crate::columns::{NUM_SHA_COLS, ShaCols};
-use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_K, U32_BITS, U32_LIMBS};
+use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_BITS, U32_LIMBS};
+use crate::encoder::encoder::Encoder;
+use crate::encoder::subair::SubAir;
 use crate::gadgets::add::AddGadget;
 use crate::generation::generate_trace_rows;
 
@@ -25,8 +28,17 @@ const BUS_INDEX: u16 = 10;
 
 /// Assumes the field size is at least 16 bits.
 #[derive(Debug)]
-pub struct ShaAir {}
+pub struct ShaAir {
+    pub round_idx_encoder: Encoder,
+}
 
+impl ShaAir {
+    pub fn new() -> Self {
+        Self {
+            round_idx_encoder: Encoder::new(64, 2, false),
+        }
+    }
+}
 impl ShaAir {
     pub fn generate_trace_rows<F: PrimeField32>(
         &self,
@@ -42,7 +54,12 @@ impl ShaAir {
                 bytes
             })
             .collect();
-        generate_trace_rows(inputs, byte_lookup, extra_capacity_bits)
+        generate_trace_rows(
+            inputs,
+            &self.round_idx_encoder,
+            byte_lookup,
+            extra_capacity_bits,
+        )
     }
 }
 
@@ -51,6 +68,10 @@ impl<F> BaseAir<F> for ShaAir {
         NUM_SHA_COLS
     }
 }
+
+impl<F> BaseAirWithPublicValues<F> for ShaAir {}
+
+impl<F> PartitionedBaseAir<F> for ShaAir {}
 
 impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
     #[inline]
@@ -90,6 +111,7 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
 
         // The export flag must be 0 or 1.
         builder.assert_bool(local.export.clone());
+        self.round_idx_encoder.eval(builder, &local.round_idx);
 
         // If this is not the final step, the export flag must be off.
         builder
@@ -148,60 +170,134 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
                     &local.sum_small_sig,
                 );
                 for j in 0..U32_LIMBS {
-                    builder.when(AB::Expr::ONE - local.first_16_steps).assert_eq(
-                        local.buf[i][j].clone(),
-                        local.sum_small_sig.value[j].clone(),
-                    );
+                    builder
+                        .when(AB::Expr::ONE - local.first_16_steps)
+                        .assert_eq(
+                            local.buf[i][j].clone(),
+                            local.sum_small_sig.value[j].clone(),
+                        );
                 }
             }
         }
 
         BigSigma1Cols::<AB::F>::eval::<AB>(
-            builder, 
-            BUS_INDEX, 
-            local.prev_seed[4], 
-            local.big_sig1.borrow()
+            builder,
+            BUS_INDEX,
+            local.prev_seed[4],
+            local.big_sig1.borrow(),
         );
 
         ChooseCols::<AB::F>::eval::<AB>(
-            builder, 
-            BUS_INDEX, 
-            local.prev_seed[4], 
-            local.prev_seed[5], 
+            builder,
+            BUS_INDEX,
+            local.prev_seed[4],
+            local.prev_seed[5],
             local.prev_seed[6],
-            local.ch.borrow()
+            local.ch.borrow(),
+        );
+
+        let k: [<AB as AirBuilder>::Expr; 4] = array::from_fn(|j| {
+            self.round_idx_encoder.flag_with_val::<AB>(
+                &local.round_idx,
+                &(0..64)
+                    .map(|round_idx| (round_idx, SHA256_K[round_idx].to_le_bytes()[j] as usize))
+                    .collect::<Vec<_>>(),
+            )
+        });
+
+        let w: [<AB as AirBuilder>::Expr; 4] = array::from_fn(|j| {
+            self.round_idx_encoder.flag_with_expr::<AB>(
+                &local.round_idx,
+                &(0..64)
+                    .map(|round_idx| (round_idx, local.buf[round_idx][j].clone()))
+                    .collect::<Vec<_>>(),
+            )
+        });
+
+        let mut inputs = vec![k, w];
+        for i in [
+            local.prev_seed[7],
+            local.big_sig1.xor3.value,
+            local.ch.value,
+        ] {
+            inputs.push([i[0].into(), i[1].into(), i[2].into(), i[3].into()])
+        }
+
+        AddGadget::<AB::F, 5>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            inputs.try_into().unwrap(),
+            &local.sum_t1,
         );
 
         BigSigma0Cols::<AB::F>::eval::<AB>(
-            builder, 
-            BUS_INDEX, 
-            local.prev_seed[0], 
-            local.big_sig0.borrow()
+            builder,
+            BUS_INDEX,
+            local.prev_seed[0],
+            local.big_sig0.borrow(),
         );
 
         MajorCols::<AB::F>::eval::<AB>(
-            builder, 
-            BUS_INDEX, 
-            local.prev_seed[0], 
-            local.prev_seed[1], 
+            builder,
+            BUS_INDEX,
+            local.prev_seed[0],
+            local.prev_seed[1],
             local.prev_seed[2],
-            local.maj.borrow()
+            local.maj.borrow(),
+        );
+        AddGadget::<AB::F, 2>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            [local.big_sig0.xor3.value, local.maj.xor3.value],
+            &local.sum_t2,
         );
 
-        for i in 0..NUM_ROUNDS {
-            // TODO: Add gadget with choosen round
-            // let t1 = [
-            //     local.prev_seed[7],
-            //     local.big_sig1.xor3.value,
-            //     local.ch.value,
-            //     AB::Expr::from_canonical_u32(SHA256_K[])
-            // ]
-            // AddGadget::<AB::F, 5>::eval::<AB>(
-            //     builder, 
-            //     BUS_INDEX, 
-            //     t1, 
-            //     cols
-            // );
+        AddGadget::<AB::F, 2>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            [local.prev_seed[3], local.sum_t1.value],
+            &local.sum_e,
+        );
+        AddGadget::<AB::F, 2>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            [local.sum_t1.value, local.sum_t2.value],
+            &local.sum_a,
+        );
+
+        for i in 0..U32_LIMBS {
+            builder.assert_eq(local.seed[0][i], local.prev_seed[6][i]);
+            builder.assert_eq(local.seed[1][i], local.prev_seed[5][i]);
+            builder.assert_eq(local.seed[2][i], local.prev_seed[4][i]);
+            builder.assert_eq(local.seed[3][i], local.sum_e.value[i]);
+            builder.assert_eq(local.seed[4][i], local.prev_seed[2][i]);
+            builder.assert_eq(local.seed[5][i], local.prev_seed[1][i]);
+            builder.assert_eq(local.seed[6][i], local.prev_seed[0][i]);
+            builder.assert_eq(local.seed[7][i], local.sum_a.value[i]);
+        }
+
+        for i in 0..8 {
+            AddGadget::<AB::F, 2>::eval::<AB>(
+                builder,
+                BUS_INDEX,
+                [
+                    array::from_fn(|j| AB::Expr::from_canonical_u8(SHA256_H[i].to_le_bytes()[j])),
+                    [
+                        local.seed[i][0].into(),
+                        local.seed[i][1].into(),
+                        local.seed[i][2].into(),
+                        local.seed[i][3].into(),
+                    ]
+                ],
+                &local.sum_final[i],
+            );
+
+            for j in 0..U32_LIMBS{
+                builder.when(final_step).assert_eq(
+                    local.final_hash[i][j], 
+                    local.sum_final[i].value[j]
+                );
+            }
         }
     }
 }
@@ -245,10 +341,3 @@ pub(crate) fn eval_round_flags<AB: AirBuilder>(builder: &mut AB) {
     }
 }
 
-fn try_clone_array<T: Clone, const N: usize>(slice: &[T]) -> [T; N] {
-    // Check at runtime that the length is correct (should always hold).
-    assert!(slice.len() == N, "Incorrect length");
-
-    // Clone each element into a new array.
-    array::from_fn(|i| slice[i].clone())
-}

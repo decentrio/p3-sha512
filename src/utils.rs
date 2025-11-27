@@ -1,3 +1,5 @@
+use crate::encoder::encoder::Encoder;
+
 
 /// Convert a list of limbs in little endian into a u32
 pub fn limbs_into_u32<const NUM_LIMBS: usize>(limbs: [u32; NUM_LIMBS]) -> u32 {
@@ -29,3 +31,7 @@ pub fn ch(x: u32, y: u32, z: u32) -> u32 {
     (x & y) ^ ((!x) & z)
 }
 
+/// Wrapper of `get_flag_pt` to get the flag pointer as an array
+pub fn get_flag_pt_array<const N: usize>(encoder: &Encoder, flag_idx: usize) -> [u32; N] {
+    encoder.get_flag_pt(flag_idx).try_into().unwrap()
+}
