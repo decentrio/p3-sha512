@@ -25,7 +25,8 @@ pub struct AddGadget<T, const N: usize> {
 
 impl<F: Field, const N: usize> AddGadget<F, N> {
     pub fn populate(&mut self, lookup: &ByteLookupChip, inputs_u32: [u32; N]) -> u32 {
-        let expected = inputs_u32.iter().sum::<u32>();
+        let expected = inputs_u32.iter().fold::<u32, _>(0, |acc, x| acc.wrapping_add(*x));
+        // let expected: u32 = inputs_u32.iter().sum();
         self.value = expected.to_le_bytes().map(F::from_canonical_u8);
 
         let inputs = inputs_u32
@@ -34,7 +35,7 @@ impl<F: Field, const N: usize> AddGadget<F, N> {
             .collect::<Vec<[u8; U32_LIMBS]>>();
 
         let base = 256;
-        let mut carry = [0u8; N];
+        let mut carry = [0u8; 5];
         for i in 0..U32_LIMBS {
             let mut column_sum = inputs.iter().map(|input| input[i] as u32).sum::<u32>();
             if i > 0 {

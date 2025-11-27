@@ -23,8 +23,8 @@ use crate::encoder::encoder::Encoder;
 use crate::encoder::subair::SubAir;
 use crate::gadgets::add::AddGadget;
 use crate::generation::generate_trace_rows;
-
-const BUS_INDEX: u16 = 10;
+use crate::utils::sha256;
+pub const BUS_INDEX: u16 = 10;
 
 /// Assumes the field size is at least 16 bits.
 #[derive(Debug)]
@@ -47,13 +47,20 @@ impl ShaAir {
         extra_capacity_bits: usize,
     ) -> RowMajorMatrix<F> {
         let mut rng = StdRng::seed_from_u64(1);
-        let inputs = (0..num_hashes)
+        let mut inputs: Vec<[u8; 64]> = (0..num_hashes)
             .map(|_| {
                 let mut bytes = [0u8; 64];
                 rng.fill(&mut bytes);
                 bytes
             })
             .collect();
+        let mut padding = [0u8;64];
+        padding[0] = 0x80;
+        padding[56..64].copy_from_slice(&(inputs.len() * 64 << 3).to_be_bytes());
+        inputs.push(padding);
+        println!("inputs: {:?}", inputs);
+        println!("inputs len: {:?}", inputs.clone().into_flattened().len());
+        println!("input hash: {:?}", sha256(&inputs[0]));
         generate_trace_rows(
             inputs,
             &self.round_idx_encoder,

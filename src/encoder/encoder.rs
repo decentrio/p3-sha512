@@ -50,7 +50,7 @@ impl Encoder {
         let k = (0..)
             .find(|&x| binomial(x) >= cnt as u32 + reserve_invalid as u32)
             .unwrap() as usize;
-
+        println!("k: {}", k);
         // Generate all points where coordinates sum to at most max_degree
         let mut cur = vec![0u32; k];
         let mut sum = 0;

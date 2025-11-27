@@ -26,7 +26,7 @@ impl<F: PrimeField32> ChooseCols<F> {
             let and_xy = req[0];
             self.and_xy[i] = F::from_canonical_u8(and_xy);
 
-            let req = lookup.request(1 - x_bytes[i], z_bytes[i], ByteLookupOp::And);
+            let req = lookup.request(!x_bytes[i], z_bytes[i], ByteLookupOp::And);
             let andn_xz = req[0];
             self.andn_xz[i] = F::from_canonical_u8(andn_xz);
 

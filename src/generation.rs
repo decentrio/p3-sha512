@@ -1,11 +1,12 @@
 use std::{array, iter::repeat_n};
 
+use itertools::Itertools;
 use p3_field::PrimeField32;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_maybe_rayon::prelude::*;
 
 use crate::{
-    chips::byte::ByteLookupChip, columns::{NUM_SHA_COLS, ShaCols}, constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS}, encoder::encoder::Encoder, utils::{big_sig0, big_sig1, ch, limbs_into_u32, maj}
+    chips::byte::ByteLookupChip, columns::{NUM_SHA_COLS, ShaCols}, constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS}, encoder::encoder::Encoder, utils::{big_sig0, big_sig1, ch, compose, limbs_into_u32, maj}
 };
 
 use crate::utils::get_flag_pt_array;
@@ -18,7 +19,7 @@ pub fn generate_trace_rows<F: PrimeField32>(
 ) -> RowMajorMatrix<F> {
     let num_rows = (inputs.len() * NUM_ROUNDS).next_power_of_two();
     let trace_length = num_rows * NUM_SHA_COLS;
-
+    println!("num rows: {}", num_rows);
     // We allocate extra_capacity_bits now as this will be needed by the dft.
     let mut long_trace = F::zero_vec(trace_length << extra_capacity_bits);
     long_trace.truncate(trace_length);
@@ -30,14 +31,19 @@ pub fn generate_trace_rows<F: PrimeField32>(
     assert_eq!(rows.len(), num_rows);
 
     let num_padding_inputs = num_rows.div_ceil(NUM_ROUNDS) - inputs.len();
+    println!("{}", num_padding_inputs);
     let padded_inputs = inputs
         .into_par_iter()
         .chain(repeat_n([0; 64], num_padding_inputs));
+    println!("padded_inputs:{:?}", padded_inputs);
 
+    println!("len: {}", padded_inputs.try_len().unwrap());
+    let mut prev_seed = SHA256_H;
     rows.par_chunks_mut(NUM_ROUNDS)
         .zip(padded_inputs)
         .for_each(|(row, input)| {
-            generate_trace_rows_for_block(row, encoder, byte_lookup, input);
+            generate_trace_rows_for_block(row, encoder, byte_lookup, input, prev_seed);
+            prev_seed = array::from_fn(|i| compose(row[NUM_ROUNDS_MIN_1].final_hash[i].map(|x| x.as_canonical_u32())))
         });
 
     trace
@@ -48,6 +54,7 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
     encoder: &Encoder,
     byte_lookup: &ByteLookupChip,
     input_block: [u8; 64],
+    prev_seed: [u32; 8],
 ) {
     rows[0].input_block = array::from_fn(|i| F::from_canonical_u8(input_block[i]));
     let mut buf = [0u32; 64];
@@ -79,7 +86,7 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
 
     let buf_u8: [[u8; U32_LIMBS]; 64] = array::from_fn(|i| buf[i].to_le_bytes());
 
-    let prev_seed: [[u8; U32_LIMBS]; 8] = array::from_fn(|i| SHA256_H[i].to_le_bytes());
+    let prev_seed: [[u8; U32_LIMBS]; 8] = array::from_fn(|i| prev_seed[i].to_le_bytes());
     rows[0].prev_seed =
         array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(prev_seed[i][j])));
 
@@ -94,13 +101,14 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
         generate_trace_row_for_round(&mut rows[round], encoder, byte_lookup, round);
     }
 
-    rows[NUM_ROUNDS_MIN_1].final_hash = array::from_fn(|i| {
-        array::from_fn(|j| {
-            let x_32 = limbs_into_u32(rows[NUM_ROUNDS_MIN_1].seed.map(|f| f[j].as_canonical_u32()));
-            let y_32 = limbs_into_u32(rows[0].prev_seed.map(|f| f[j].as_canonical_u32()));
-            F::from_canonical_u8(rows[NUM_ROUNDS_MIN_1].sum_final[j].populate(byte_lookup, [x_32, y_32]).to_le_bytes()[i])
-        })
-    });
+    for i in 0..8 {
+        for j in 0..U32_LIMBS{
+            let x_32: u32 = compose(rows[NUM_ROUNDS_MIN_1].seed[i].map(|x| x.as_canonical_u32()));
+            let y_32: u32 = compose(rows[0].prev_seed[i].map(|x| x.as_canonical_u32()));
+            rows[NUM_ROUNDS_MIN_1].final_hash[i][j] = F::from_canonical_u8(rows[NUM_ROUNDS_MIN_1].sum_final[i].populate(byte_lookup, [x_32, y_32]).to_le_bytes()[j]);
+        }
+    }
+    println!("final hash: {:?}", rows[NUM_ROUNDS_MIN_1].final_hash);
 }
 
 // permute
@@ -172,13 +180,14 @@ pub fn generate_trace_row_for_round<F: PrimeField32>(
     });
 
     row.seed = [
-        row.prev_seed[6],
-        row.prev_seed[5],
-        row.prev_seed[4],
-        e,
-        row.prev_seed[2],
-        row.prev_seed[1],
-        row.prev_seed[0],
         a,
+        row.prev_seed[0],
+        row.prev_seed[1],
+        row.prev_seed[2],
+        e,
+        row.prev_seed[4],
+        row.prev_seed[5],
+        row.prev_seed[6],
     ];
+    println!("row seed [{}]: {:?}", round, row.seed)
 }
