@@ -64,6 +64,46 @@ impl<F: Field, const N: usize> AddGadget<F, N> {
         expected
     }
 
+     pub fn populate_without_rangecheck(&mut self, lookup: &ByteLookupChip, inputs_u32: [u32; N]) -> u32 {
+        let expected = inputs_u32.iter().fold::<u32, _>(0, |acc, x| acc.wrapping_add(*x));
+        // let expected: u32 = inputs_u32.iter().sum();
+        self.value = expected.to_le_bytes().map(F::from_canonical_u8);
+
+        let inputs = inputs_u32
+            .iter()
+            .map(|&x| x.to_le_bytes())
+            .collect::<Vec<[u8; U32_LIMBS]>>();
+
+        let base = 256;
+        let mut carry = [0u8; 5];
+        for i in 0..U32_LIMBS {
+            let mut column_sum = inputs.iter().map(|input| input[i] as u32).sum::<u32>();
+            if i > 0 {
+                column_sum += carry[i - 1] as u32;
+            }
+            carry[i] = (column_sum / base) as u8;
+            self.is_carry
+                .iter_mut()
+                .enumerate()
+                .for_each(|(j, is_carry_col)| {
+                    is_carry_col[i] = F::from_bool(carry[i] == j as u8);
+                });
+            self.carry[i] = F::from_canonical_u8(carry[i]);
+            debug_assert!(carry[i] <= (N - 1) as u8);
+            debug_assert_eq!(self.value[i], F::from_canonical_u32(column_sum % base));
+        }
+
+        // {
+        //     let mut inputs_and_result = inputs.clone();
+        //     inputs_and_result.push(expected.to_le_bytes());
+
+        //     inputs_and_result
+        //         .into_iter()
+        //         .for_each(|bytes| lookup.request_u8_range_checks(bytes));
+        // }
+        expected
+    }
+
     pub fn eval<AB: ChipBuilder>(
         builder: &mut AB,
         lookup_bus: BusIndex,

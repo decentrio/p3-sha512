@@ -20,6 +20,7 @@ pub struct ShaCols<T> {
     pub round_idx: [T; SHA256_ROUND_VAR_CNT],
 
     pub input_block: [T; 64],
+    pub prev_block_seed: [[T; U32_LIMBS]; 8],
     pub prev_seed: [[T; U32_LIMBS]; 8],
     pub seed: [[T; U32_LIMBS]; 8],
     pub final_hash: [[T; U32_LIMBS]; 8],

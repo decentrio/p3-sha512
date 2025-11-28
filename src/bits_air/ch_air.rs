@@ -26,7 +26,7 @@ impl<F: PrimeField32> ChooseCols<F> {
             let and_xy = req[0];
             self.and_xy[i] = F::from_canonical_u8(and_xy);
 
-            let req = lookup.request(!x_bytes[i], z_bytes[i], ByteLookupOp::And);
+            let req = lookup.request(255u8.wrapping_sub(x_bytes[i]), z_bytes[i], ByteLookupOp::And);
             let andn_xz = req[0];
             self.andn_xz[i] = F::from_canonical_u8(andn_xz);
 
@@ -59,7 +59,7 @@ impl<F: PrimeField32> ChooseCols<F> {
             builder.push_interaction(lookup_bus, interaction_data, AB::Expr::ONE, 1);
 
             let mut interaction_data: Vec<AB::Expr> = Vec::new();
-            interaction_data.push(AB::Expr::ONE - x_i);
+            interaction_data.push(AB::Expr::from_canonical_u8(255) - x_i);
             interaction_data.push(z_iter.next().unwrap().into().clone());
             interaction_data.push(AB::Expr::from_canonical_u8(ByteLookupOp::And as u8));
             interaction_data.push(cols.andn_xz[i].clone().into());

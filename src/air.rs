@@ -23,7 +23,7 @@ use crate::encoder::encoder::Encoder;
 use crate::encoder::subair::SubAir;
 use crate::gadgets::add::AddGadget;
 use crate::generation::generate_trace_rows;
-use crate::utils::sha256;
+use crate::utils::{compose_be, compose_le};
 pub const BUS_INDEX: u16 = 10;
 
 /// Assumes the field size is at least 16 bits.
@@ -54,13 +54,10 @@ impl ShaAir {
                 bytes
             })
             .collect();
-        let mut padding = [0u8;64];
+        let mut padding = [0u8; 64];
         padding[0] = 0x80;
         padding[56..64].copy_from_slice(&(inputs.len() * 64 << 3).to_be_bytes());
         inputs.push(padding);
-        println!("inputs: {:?}", inputs);
-        println!("inputs len: {:?}", inputs.clone().into_flattened().len());
-        println!("input hash: {:?}", sha256(&inputs[0]));
         generate_trace_rows(
             inputs,
             &self.round_idx_encoder,
@@ -90,17 +87,8 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
         let local: &ShaCols<AB::Var> = (*local).borrow();
         let next: &ShaCols<AB::Var> = (*next).borrow();
 
-        let first_step = local.step_flags[0].clone();
         let final_step = local.step_flags[NUM_ROUNDS_MIN_1].clone();
-        let not_first_step = AB::Expr::ONE - first_step;
         let not_final_step = AB::Expr::ONE - final_step;
-
-        // If this is not the first step, assert all value in input_block must be zero.
-        for i in 0..64 {
-            builder
-                .when(not_first_step.clone())
-                .assert_zero(local.input_block[i].clone());
-        }
 
         for i in 0..8 {
             for j in 0..U32_LIMBS {
@@ -127,58 +115,16 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
 
         for i in 0..NUM_ROUNDS {
             if i < 16 {
-                // assert all values in buf from 0 to 16 is equal to input block little endian
-                for ele in local.buf[i] {
-                    builder.when(local.first_16_steps.clone()).assert_bool(ele);
-                }
-
                 for j in 0..U32_LIMBS {
                     builder.when(local.first_16_steps.clone()).assert_zero(
-                        local.buf[i][j].clone() - local.input_block[i * 4 + j].clone(),
+                        local.buf[i][3 - j].clone() - local.input_block[i * 4 + j].clone(),
                     );
                 }
             } else {
-                // TODO: constraint first row
-                let v1 = [
-                    local.buf[i - 2][0].clone().into(),
-                    local.buf[i - 2][1].clone().into(),
-                    local.buf[i - 2][2].clone().into(),
-                    local.buf[i - 2][3].clone().into(),
-                ];
-                SmallSigma1Cols::<AB::F>::eval::<AB>(
-                    builder,
-                    BUS_INDEX,
-                    v1,
-                    local.small_sig1.borrow(),
-                );
-                let v2 = [
-                    local.buf[i - 15][0].clone().into(),
-                    local.buf[i - 15][1].clone().into(),
-                    local.buf[i - 15][2].clone().into(),
-                    local.buf[i - 15][3].clone().into(),
-                ];
-                SmallSigma0Cols::<AB::F>::eval::<AB>(
-                    builder,
-                    BUS_INDEX,
-                    v2,
-                    local.small_sig0.borrow(),
-                );
-
-                let add_input = [
-                    local.small_sig1.xor3.value,
-                    local.buf[i - 7],
-                    local.small_sig0.xor3.value,
-                    local.buf[i - 16],
-                ];
-                AddGadget::<AB::F, 4>::eval::<AB>(
-                    builder,
-                    BUS_INDEX,
-                    add_input,
-                    &local.sum_small_sig,
-                );
                 for j in 0..U32_LIMBS {
                     builder
                         .when(AB::Expr::ONE - local.first_16_steps)
+                        .when(local.step_flags[i].clone())
                         .assert_eq(
                             local.buf[i][j].clone(),
                             local.sum_small_sig.value[j].clone(),
@@ -186,7 +132,53 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
                 }
             }
         }
+        // Eval small sigma logic.
+        let add_inputs: [[<AB as AirBuilder>::Expr; 4]; 4] = array::from_fn(|i| {
+            array::from_fn(|j| {
+                self.round_idx_encoder.flag_with_expr::<AB>(
+                    &local.round_idx,
+                    &(16..64)
+                        .map(|round_idx| {
+                            (
+                                round_idx,
+                                [
+                                    local.buf[round_idx - 2][j].clone(),
+                                    local.buf[round_idx - 7][j].clone(),
+                                    local.buf[round_idx - 15][j].clone(),
+                                    local.buf[round_idx - 16][j].clone(),
+                                ][i],
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+        });
+        SmallSigma1Cols::<AB::F>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            add_inputs[0].clone(),
+            local.small_sig1.borrow(),
+        );
 
+        SmallSigma0Cols::<AB::F>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            add_inputs[2].clone(),
+            local.small_sig0.borrow(),
+        );
+
+        let mut inputs = vec![add_inputs[1].clone(), add_inputs[3].clone()];
+        for i in [local.small_sig0.xor3.value, local.small_sig1.xor3.value] {
+            inputs.push([i[0].into(), i[1].into(), i[2].into(), i[3].into()])
+        }
+        AddGadget::<AB::F, 4>::eval::<AB>(
+            builder,
+            BUS_INDEX,
+            inputs.try_into().unwrap(),
+            &local.sum_small_sig,
+        );
+
+        // Eval big sigma logic.
         BigSigma1Cols::<AB::F>::eval::<AB>(
             builder,
             BUS_INDEX,
@@ -273,37 +265,52 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
         );
 
         for i in 0..U32_LIMBS {
-            builder.assert_eq(local.seed[0][i], local.prev_seed[6][i]);
-            builder.assert_eq(local.seed[1][i], local.prev_seed[5][i]);
-            builder.assert_eq(local.seed[2][i], local.prev_seed[4][i]);
-            builder.assert_eq(local.seed[3][i], local.sum_e.value[i]);
-            builder.assert_eq(local.seed[4][i], local.prev_seed[2][i]);
-            builder.assert_eq(local.seed[5][i], local.prev_seed[1][i]);
-            builder.assert_eq(local.seed[6][i], local.prev_seed[0][i]);
-            builder.assert_eq(local.seed[7][i], local.sum_a.value[i]);
+            builder.assert_eq(local.seed[0][i], local.sum_a.value[i]);
+            builder.assert_eq(local.seed[1][i], local.prev_seed[0][i]);
+            builder.assert_eq(local.seed[2][i], local.prev_seed[1][i]);
+            builder.assert_eq(local.seed[3][i], local.prev_seed[2][i]);
+            builder.assert_eq(local.seed[4][i], local.sum_e.value[i]);
+            builder.assert_eq(local.seed[5][i], local.prev_seed[4][i]);
+            builder.assert_eq(local.seed[6][i], local.prev_seed[5][i]);
+            builder.assert_eq(local.seed[7][i], local.prev_seed[6][i]);
         }
 
-        for i in 0..8 {
-            AddGadget::<AB::F, 2>::eval::<AB>(
-                builder,
-                BUS_INDEX,
-                [
-                    array::from_fn(|j| AB::Expr::from_canonical_u8(SHA256_H[i].to_le_bytes()[j])),
-                    [
-                        local.seed[i][0].into(),
-                        local.seed[i][1].into(),
-                        local.seed[i][2].into(),
-                        local.seed[i][3].into(),
-                    ]
-                ],
-                &local.sum_final[i],
-            );
+        let prev_block_seed: [[<AB as AirBuilder>::Expr; 4]; 8] = array::from_fn(|i| {
+            array::from_fn(|j| {
+                self.round_idx_encoder.flag_with_expr::<AB>(
+                    &local.round_idx,
+                    &[63].map(|round_idx| (round_idx, local.prev_block_seed[i][j].clone())),
+                )
+            })
+        });
 
-            for j in 0..U32_LIMBS{
-                builder.when(final_step).assert_eq(
-                    local.final_hash[i][j], 
-                    local.sum_final[i].value[j]
-                );
+        let current_block_seed: [[<AB as AirBuilder>::Expr; 4]; 8] = array::from_fn(|i| {
+            array::from_fn(|j| {
+                self.round_idx_encoder.flag_with_expr::<AB>(
+                    &local.round_idx,
+                    &[63].map(|round_idx| (round_idx, local.seed[i][j].clone())),
+                )
+            })
+        });
+
+        for i in 0..8 {
+            // AddGadget::<AB::F, 2>::eval::<AB>(
+            //     builder,
+            //     BUS_INDEX,
+            //     [prev_block_seed[i].clone(), current_block_seed[i].clone()],
+            //     &local.sum_final[i],
+            // );
+
+            for j in 0..U32_LIMBS {
+                builder
+                    .when_first_row()
+                    .assert_eq(
+                        local.prev_seed[i][j].clone(),
+                        AB::Expr::from_canonical_u8(SHA256_H[i].to_le_bytes()[j]),
+                    );
+                builder
+                    .when(final_step)
+                    .assert_eq(local.final_hash[i][j], local.sum_final[i].value[j]);
             }
         }
     }
@@ -347,4 +354,3 @@ pub(crate) fn eval_round_flags<AB: AirBuilder>(builder: &mut AB) {
         );
     }
 }
-
