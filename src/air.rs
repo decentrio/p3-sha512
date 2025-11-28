@@ -87,6 +87,7 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
         let local: &ShaCols<AB::Var> = (*local).borrow();
         let next: &ShaCols<AB::Var> = (*next).borrow();
 
+        let first_step = local.step_flags[0].clone();
         let final_step = local.step_flags[NUM_ROUNDS_MIN_1].clone();
         let not_final_step = AB::Expr::ONE - final_step;
 
@@ -275,39 +276,20 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
             builder.assert_eq(local.seed[7][i], local.prev_seed[6][i]);
         }
 
-        let prev_block_seed: [[<AB as AirBuilder>::Expr; 4]; 8] = array::from_fn(|i| {
-            array::from_fn(|j| {
-                self.round_idx_encoder.flag_with_expr::<AB>(
-                    &local.round_idx,
-                    &[63].map(|round_idx| (round_idx, local.prev_block_seed[i][j].clone())),
-                )
-            })
-        });
-
-        let current_block_seed: [[<AB as AirBuilder>::Expr; 4]; 8] = array::from_fn(|i| {
-            array::from_fn(|j| {
-                self.round_idx_encoder.flag_with_expr::<AB>(
-                    &local.round_idx,
-                    &[63].map(|round_idx| (round_idx, local.seed[i][j].clone())),
-                )
-            })
-        });
-
         for i in 0..8 {
-            // AddGadget::<AB::F, 2>::eval::<AB>(
-            //     builder,
-            //     BUS_INDEX,
-            //     [prev_block_seed[i].clone(), current_block_seed[i].clone()],
-            //     &local.sum_final[i],
-            // );
+            AddGadget::<AB::F, 2>::eval::<AB>(
+                builder,
+                BUS_INDEX,
+                [local.seed[i].clone(), local.prev_block_seed[i].clone()],
+                &local.sum_final[i],
+            );
 
             for j in 0..U32_LIMBS {
-                builder
-                    .when_first_row()
-                    .assert_eq(
-                        local.prev_seed[i][j].clone(),
-                        AB::Expr::from_canonical_u8(SHA256_H[i].to_le_bytes()[j]),
-                    );
+                builder.when_first_row().assert_eq(
+                    local.prev_seed[i][j].clone(),
+                    AB::Expr::from_canonical_u8(SHA256_H[i].to_le_bytes()[j]),
+                );
+
                 builder
                     .when(final_step)
                     .assert_eq(local.final_hash[i][j], local.sum_final[i].value[j]);

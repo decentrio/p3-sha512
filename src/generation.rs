@@ -86,8 +86,7 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
 
     let prev_block_seed: [[u8; U32_LIMBS]; 8] =
         array::from_fn(|i| prev_block_seed[i].to_le_bytes());
-    rows[NUM_ROUNDS_MIN_1].prev_block_seed =
-        array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(prev_block_seed[i][j])));
+
     rows[0].prev_seed =
         array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(prev_block_seed[i][j])));
 
@@ -95,24 +94,26 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
         if round != 0 {
             rows[round].prev_seed = rows[round - 1].seed;
         }
+
         rows[round].input_block = array::from_fn(|i| F::from_canonical_u8(input_block[i]));
         rows[round].buf =
             array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(buf_u8[i][j])));
-
+        rows[round].prev_block_seed =
+            array::from_fn(|i| array::from_fn(|j| F::from_canonical_u8(prev_block_seed[i][j])));
         generate_trace_row_for_round(&mut rows[round], encoder, byte_lookup, round);
+        for i in 0..8 {
+            rows[round].sum_final[i].populate(
+                byte_lookup,
+                [
+                    compose(rows[round].seed[i].map(|x| x.as_canonical_u32())),
+                    compose(rows[round].prev_block_seed[i].map(|x| x.as_canonical_u32())),
+                ],
+            );
+        }
     }
 
     for i in 0..8 {
-        for j in 0..U32_LIMBS {
-            let x_32: u32 = compose(rows[NUM_ROUNDS_MIN_1].seed[i].map(|x| x.as_canonical_u32()));
-            let y_32: u32 =
-                compose(rows[NUM_ROUNDS_MIN_1].prev_block_seed[i].map(|x| x.as_canonical_u32()));
-            rows[NUM_ROUNDS_MIN_1].final_hash[i][j] = F::from_canonical_u8(
-                rows[NUM_ROUNDS_MIN_1].sum_final[i]
-                    .populate_without_rangecheck(byte_lookup, [x_32, y_32])
-                    .to_le_bytes()[j],
-            );
-        }
+        rows[NUM_ROUNDS_MIN_1].final_hash[i] = rows[NUM_ROUNDS_MIN_1].sum_final[i].value;
     }
 }
 
