@@ -1,4 +1,4 @@
-use std::{array, iter::repeat_n};
+use std::{array, borrow::BorrowMut, iter::repeat_n};
 
 use itertools::Itertools;
 use p3_field::PrimeField32;
@@ -8,7 +8,7 @@ use p3_maybe_rayon::prelude::*;
 use crate::{
     chips::byte::ByteLookupChip,
     columns::{NUM_SHA_COLS, ShaCols},
-    constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_LIMBS},
+    constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, NUM_ROUNDS_PER_ROW, SHA256_H, SHA256_K, U32_LIMBS},
     encoder::encoder::Encoder,
     utils::{big_sig0, big_sig1, ch, compose, limbs_into_u32, maj},
 };
@@ -60,25 +60,47 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
 ) {
     let mut buf = [0u32; 64];
     for i in 0..NUM_ROUNDS {
-        if i < 16 {
-            let j = i * 4;
-            buf[i] = (input_block.as_ref()[j] as u32) << 24
-                | (input_block.as_ref()[j + 1] as u32) << 16
-                | (input_block.as_ref()[j + 2] as u32) << 8
-                | (input_block.as_ref()[j + 3] as u32);
-            rows[i].small_sig1.populate(byte_lookup, 0);
-            rows[i].small_sig0.populate(byte_lookup, 0);
-            rows[i].sum_small_sig.populate(byte_lookup, [0, 0, 0, 0]);
+        if i < 4 {
+            for j in 0..NUM_ROUNDS_PER_ROW {
+                let k = i * 4 + j;
+                buf[k] = (input_block.as_ref()[k * 4] as u32) << 24
+                    | (input_block.as_ref()[k * 4 + 1] as u32) << 16
+                    | (input_block.as_ref()[k * 4 + 2] as u32) << 8
+                    | (input_block.as_ref()[k * 4 + 3] as u32);
+                if i == 0 {
+                    rows[i].small_sig1[j].populate(byte_lookup, 0);
+                    rows[i].small_sig0[j].populate(byte_lookup, 0);
+                }
+                rows[i].sum_small_sig[j].populate(byte_lookup, [0, 0, 0, 0]);
+            }
         } else {
-            let v1 = buf[i - 2];
-            let v2 = buf[i - 15];
+            for j in 0..NUM_ROUNDS_PER_ROW {
+                let k = i * 4 + j;
+                let v1 = buf[k - 2];
+                let v2 = buf[k - 15];
 
-            // update value to columns
-            let t1 = rows[i].small_sig1.populate(byte_lookup, v1);
-            let t2 = rows[i].small_sig0.populate(byte_lookup, v2);
-            buf[i] = rows[i]
-                .sum_small_sig
-                .populate(byte_lookup, [buf[i - 7], buf[i - 16], t1, t2]);
+                // update value to columns
+                let t1 = rows[i].small_sig1[j].populate(byte_lookup, v1);
+                let t2 = rows[i].small_sig0[j].populate(byte_lookup, v2);
+                buf[k] = rows[i]
+                    .sum_small_sig[j]
+                    .populate(byte_lookup, [buf[k - 7], buf[k - 16], t1, t2]);
+            }
+        }
+
+        // filling w_3 and intermed_4 here and the rest later
+        if i > 0 {
+            for j in 0..NUM_ROUNDS_PER_ROW {
+                let idx = i * NUM_ROUNDS_PER_ROW + j;
+                let w_4 = buf[idx - 4].to_le_bytes();
+                let sig_0_w_3 = rows[i].small_sig0[j].populate(byte_lookup, buf[idx-3]).to_le_bytes();
+                rows[i].intermed_4[j] =
+                    array::from_fn(|k| F::from_canonical_u8(w_4[k] + sig_0_w_3[k]));
+                if j < NUM_ROUNDS_PER_ROW - 1 {
+                    let w_3 = buf[idx - 3];
+                    rows[i].w_3[j] = w_3.to_le_bytes().map(F::from_canonical_u8);
+                }
+            }
         }
     }
 
@@ -112,6 +134,16 @@ pub fn generate_trace_rows_for_block<F: PrimeField32>(
         }
     }
 
+    for i in 0..NUM_ROUNDS {
+        let local_cols = rows[i].borrow_mut();
+        let next_cols = rows[i + 1].borrow_mut();
+
+        if i > 0 {
+            for j in 0..NUM_ROUNDS_PER_ROW {
+                next_cols.intermed_8[j] = local_cols.intermed_4[j];
+            }
+        }
+    }
     for i in 0..8 {
         rows[NUM_ROUNDS_MIN_1].final_hash[i] = rows[NUM_ROUNDS_MIN_1].sum_final[i].value;
     }
@@ -125,68 +157,87 @@ pub fn generate_trace_row_for_round<F: PrimeField32>(
     round: usize,
 ) {
     row.step_flags[round] = F::ONE;
-    if round < 16 {
+    if round < 4 {
         row.first_16_steps = F::ONE
     }
     row.final_hash = array::from_fn(|_| array::from_fn(|_| F::ZERO));
     row.round_idx = get_flag_pt_array(encoder, round).map(F::from_canonical_u32);
-    let t1 = [
-        SHA256_K[round],
-        limbs_into_u32(row.buf[round].map(|f| f.as_canonical_u32())),
-        limbs_into_u32(row.prev_seed[7].map(|f| f.as_canonical_u32())),
-        row.big_sig1.populate(
-            byte_lookup,
-            limbs_into_u32(row.prev_seed[4].map(|f| f.as_canonical_u32())),
-        ),
-        row.ch.populate(
-            byte_lookup,
-            limbs_into_u32(row.prev_seed[4].map(|f| f.as_canonical_u32())),
-            limbs_into_u32(row.prev_seed[5].map(|f| f.as_canonical_u32())),
-            limbs_into_u32(row.prev_seed[6].map(|f| f.as_canonical_u32())),
-        ),
-    ];
-    let t1_sum: u32 = row.sum_t1.populate(byte_lookup, t1);
+    let mut seed_a = vec![row.prev_seed[0]];
+    let mut seed_e = vec![row.prev_seed[4]];
 
-    let t2 = [
-        row.big_sig0.populate(
-            byte_lookup,
-            limbs_into_u32(row.prev_seed[0].map(|f| f.as_canonical_u32())),
-        ),
-        row.maj.populate(
-            byte_lookup,
-            limbs_into_u32(row.prev_seed[0].map(|f| f.as_canonical_u32())),
-            limbs_into_u32(row.prev_seed[1].map(|f| f.as_canonical_u32())),
-            limbs_into_u32(row.prev_seed[2].map(|f| f.as_canonical_u32())),
-        ),
-    ];
-    let t2_sum: u32 = row.sum_t2.populate(byte_lookup, t2);
+    let mut ch_inputs = vec![row.prev_seed[6], row.prev_seed[5], row.prev_seed[4]];
+    let mut maj_inputs = vec![row.prev_seed[2], row.prev_seed[1], row.prev_seed[0]];
 
-    let e = row
-        .sum_e
-        .populate(
-            byte_lookup,
-            [
-                limbs_into_u32(row.prev_seed[3].map(|f| f.as_canonical_u32())),
-                t1_sum,
-            ],
-        )
-        .to_le_bytes()
-        .map(|i| F::from_canonical_u8(i));
+    for i in 0..NUM_ROUNDS_PER_ROW -1 {
+        let t1 = [
+            SHA256_K[round * 4 + i],
+            limbs_into_u32(row.buf[round * 4 + i].map(|f| f.as_canonical_u32())),
+            // h -> g -> f depends on which rounds
+            limbs_into_u32(row.prev_seed[7 - i].map(|f| f.as_canonical_u32())),
+            row.big_sig1[i].populate(
+                byte_lookup,
+                limbs_into_u32(seed_e[i].map(|f| f.as_canonical_u32())),
+            ),
+            row.ch[i].populate(
+                byte_lookup,
+                limbs_into_u32(ch_inputs[0].map(|f| f.as_canonical_u32())),
+                limbs_into_u32(ch_inputs[1].map(|f| f.as_canonical_u32())),
+                limbs_into_u32(ch_inputs[2].map(|f| f.as_canonical_u32())),
+            ),
+        ];
+        let t1_sum: u32 = row.sum_t1[i].populate(byte_lookup, t1);
 
-    let a: [F; 4] = row
-        .sum_a
-        .populate(byte_lookup, [t1_sum, t2_sum])
-        .to_le_bytes()
-        .map(|i| F::from_canonical_u8(i));
+        let t2 = [
+            row.big_sig0[i].populate(
+                byte_lookup,
+                limbs_into_u32(seed_a[i].map(|f| f.as_canonical_u32())),
+            ),
+            row.maj[i].populate(
+                byte_lookup,
+                limbs_into_u32(maj_inputs[0].map(|f| f.as_canonical_u32())),
+                limbs_into_u32(maj_inputs[1].map(|f| f.as_canonical_u32())),
+                limbs_into_u32(maj_inputs[2].map(|f| f.as_canonical_u32())),
+            ),
+        ];
+        let t2_sum: u32 = row.sum_t2[i].populate(byte_lookup, t2);
+
+        let e = row
+            .sum_e[i]
+            .populate(
+                byte_lookup,
+                [
+                    limbs_into_u32(row.prev_seed[3 - i].map(|f| f.as_canonical_u32())),
+                    t1_sum,
+                ],
+            )
+            .to_le_bytes()
+            .map(|i| F::from_canonical_u8(i));
+
+        let a: [F; 4] = row
+            .sum_a[i]
+            .populate(byte_lookup, [t1_sum, t2_sum])
+            .to_le_bytes()
+            .map(|i| F::from_canonical_u8(i));
+
+        seed_a.push(a);
+        seed_e.push(e);
+        ch_inputs.remove(0);
+        ch_inputs.push(e);
+        maj_inputs.remove(0);
+        maj_inputs.push(a);
+    }
+
+    row.a = seed_a.clone().try_into().unwrap();
+    row.e = seed_e.clone().try_into().unwrap();
 
     row.seed = [
-        a,
-        row.prev_seed[0],
-        row.prev_seed[1],
-        row.prev_seed[2],
-        e,
-        row.prev_seed[4],
-        row.prev_seed[5],
-        row.prev_seed[6],
+        seed_a[3],
+        seed_a[2],
+        seed_a[1],
+        seed_a[0],
+        seed_e[3],
+        seed_e[2],
+        seed_e[1],
+        seed_e[0],
     ];
 }

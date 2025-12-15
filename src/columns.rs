@@ -5,7 +5,7 @@ use crate::bits_air::big_sig_air::{BigSigma0Cols, BigSigma1Cols};
 use crate::bits_air::ch_air::ChooseCols;
 use crate::bits_air::maj_air::MajorCols;
 use crate::bits_air::small_sig_air::{SmallSigma0Cols, SmallSigma1Cols};
-use crate::constants::{NUM_ROUNDS, SHA256_ROUND_VAR_CNT, U32_LIMBS};
+use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_PER_ROW, SHA256_ROUND_VAR_CNT, U32_LIMBS};
 use crate::gadgets::add::AddGadget;
 
 #[derive(Debug)]
@@ -21,24 +21,30 @@ pub struct ShaCols<T> {
 
     pub input_block: [T; 64],
     pub prev_block_seed: [[T; U32_LIMBS]; 8],
+    
+    pub small_sig0: [SmallSigma0Cols<T>; NUM_ROUNDS_PER_ROW],
+    pub small_sig1: [SmallSigma1Cols<T>; NUM_ROUNDS_PER_ROW],
+    pub sum_small_sig: [AddGadget<T, 4>; NUM_ROUNDS_PER_ROW],
+    pub w_3: [[T; U32_LIMBS]; NUM_ROUNDS_PER_ROW],
+    pub intermed_4: [[T; U32_LIMBS]; NUM_ROUNDS_PER_ROW],
+    pub intermed_8: [[T; U32_LIMBS]; NUM_ROUNDS_PER_ROW],
+    pub intermed_12: [[T; U32_LIMBS]; NUM_ROUNDS_PER_ROW],
+
+    pub big_sig0: [BigSigma0Cols<T>; NUM_ROUNDS_PER_ROW -1],
+    pub big_sig1: [BigSigma1Cols<T>; NUM_ROUNDS_PER_ROW -1],
+    pub ch: [ChooseCols<T>;  NUM_ROUNDS_PER_ROW -1],
+    pub maj: [MajorCols<T>;  NUM_ROUNDS_PER_ROW -1],
+    pub sum_t1: [AddGadget<T, 5>;  NUM_ROUNDS_PER_ROW -1],
+    pub sum_t2: [AddGadget<T, 2>;  NUM_ROUNDS_PER_ROW -1],
+    pub sum_e: [AddGadget<T, 2>;  NUM_ROUNDS_PER_ROW -1],
+    pub sum_a: [AddGadget<T, 2>; NUM_ROUNDS_PER_ROW -1],
+
     pub prev_seed: [[T; U32_LIMBS]; 8],
+    pub a: [[T; U32_LIMBS]; 4],
+    pub e: [[T; U32_LIMBS]; 4],
     pub seed: [[T; U32_LIMBS]; 8],
     pub final_hash: [[T; U32_LIMBS]; 8],
-    pub extend: [[T; U32_LIMBS]; 64],
     pub buf: [[T; U32_LIMBS]; 64],
-    
-    pub small_sig0: SmallSigma0Cols<T>,
-    pub small_sig1: SmallSigma1Cols<T>,
-    pub sum_small_sig: AddGadget<T, 4>,
-
-    pub big_sig0: BigSigma0Cols<T>,
-    pub big_sig1: BigSigma1Cols<T>,
-    pub ch: ChooseCols<T>,
-    pub maj: MajorCols<T>,
-    pub sum_t1: AddGadget<T, 5>,
-    pub sum_t2: AddGadget<T, 2>,
-    pub sum_e: AddGadget<T, 2>,
-    pub sum_a: AddGadget<T, 2>,
 
     pub sum_final: [AddGadget<T, 2>; 8],
 }

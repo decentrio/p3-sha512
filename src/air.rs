@@ -18,7 +18,7 @@ use crate::bits_air::vanilla_rotr_air::RightRotateAir;
 use crate::builder::ChipBuilder;
 use crate::chips::byte::ByteLookupChip;
 use crate::columns::{NUM_SHA_COLS, ShaCols};
-use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, SHA256_H, SHA256_K, U32_BITS, U32_LIMBS};
+use crate::constants::{NUM_ROUNDS, NUM_ROUNDS_MIN_1, NUM_ROUNDS_PER_ROW, SHA256_H, SHA256_K, U32_BITS, U32_LIMBS};
 use crate::encoder::encoder::Encoder;
 use crate::encoder::subair::SubAir;
 use crate::gadgets::add::AddGadget;
@@ -35,7 +35,7 @@ pub struct ShaAir {
 impl ShaAir {
     pub fn new() -> Self {
         Self {
-            round_idx_encoder: Encoder::new(64, 2, false),
+            round_idx_encoder: Encoder::new(16, 2, false),
         }
     }
 }
@@ -115,186 +115,194 @@ impl<AB: ChipBuilder<F: PrimeField32>> Air<AB> for ShaAir {
             .assert_zero(local.export.clone());
 
         for i in 0..NUM_ROUNDS {
-            if i < 16 {
-                for j in 0..U32_LIMBS {
-                    builder.when(local.first_16_steps.clone()).assert_zero(
-                        local.buf[i][3 - j].clone() - local.input_block[i * 4 + j].clone(),
-                    );
+            if i < 4 {
+                for j in 0..NUM_ROUNDS_PER_ROW {
+                    let k = i * 4 + j;
+                    for l in 0..U32_LIMBS {
+                        builder.when(local.first_16_steps.clone()).assert_zero(
+                            local.buf[k][3 - l].clone() - local.input_block[k * 4 + l].clone(),
+                        );
+                    }
                 }
             } else {
-                for j in 0..U32_LIMBS {
-                    builder
-                        .when(AB::Expr::ONE - local.first_16_steps)
-                        .when(local.step_flags[i].clone())
-                        .assert_eq(
-                            local.buf[i][j].clone(),
-                            local.sum_small_sig.value[j].clone(),
-                        );
+                for j in 0..NUM_ROUNDS_PER_ROW {
+                    let k = i * 4 + j;
+                    for l in 0..U32_LIMBS {
+                        builder
+                            .when(AB::Expr::ONE - local.first_16_steps)
+                            .when(local.step_flags[i].clone())
+                            .assert_eq(
+                                local.buf[k][l].clone(),
+                                local.sum_small_sig[j].value[l].clone(),
+                            );
+                    }
                 }
             }
         }
-        // Eval small sigma logic.
-        let add_inputs: [[<AB as AirBuilder>::Expr; 4]; 4] = array::from_fn(|i| {
-            array::from_fn(|j| {
-                self.round_idx_encoder.flag_with_expr::<AB>(
-                    &local.round_idx,
-                    &(16..64)
-                        .map(|round_idx| {
-                            (
-                                round_idx,
-                                [
-                                    local.buf[round_idx - 2][j].clone(),
-                                    local.buf[round_idx - 7][j].clone(),
-                                    local.buf[round_idx - 15][j].clone(),
-                                    local.buf[round_idx - 16][j].clone(),
-                                ][i],
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            })
-        });
-        SmallSigma1Cols::<AB::F>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            add_inputs[0].clone(),
-            local.small_sig1.borrow(),
-        );
-
-        SmallSigma0Cols::<AB::F>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            add_inputs[2].clone(),
-            local.small_sig0.borrow(),
-        );
-
-        let mut inputs = vec![add_inputs[1].clone(), add_inputs[3].clone()];
-        for i in [local.small_sig0.xor3.value, local.small_sig1.xor3.value] {
-            inputs.push([i[0].into(), i[1].into(), i[2].into(), i[3].into()])
-        }
-        AddGadget::<AB::F, 4>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            inputs.try_into().unwrap(),
-            &local.sum_small_sig,
-        );
-
-        // Eval big sigma logic.
-        BigSigma1Cols::<AB::F>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            local.prev_seed[4],
-            local.big_sig1.borrow(),
-        );
-
-        ChooseCols::<AB::F>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            local.prev_seed[4],
-            local.prev_seed[5],
-            local.prev_seed[6],
-            local.ch.borrow(),
-        );
-
-        let k: [<AB as AirBuilder>::Expr; 4] = array::from_fn(|j| {
-            self.round_idx_encoder.flag_with_val::<AB>(
-                &local.round_idx,
-                &(0..64)
-                    .map(|round_idx| (round_idx, SHA256_K[round_idx].to_le_bytes()[j] as usize))
-                    .collect::<Vec<_>>(),
-            )
-        });
-
-        let w: [<AB as AirBuilder>::Expr; 4] = array::from_fn(|j| {
-            self.round_idx_encoder.flag_with_expr::<AB>(
-                &local.round_idx,
-                &(0..64)
-                    .map(|round_idx| (round_idx, local.buf[round_idx][j].clone()))
-                    .collect::<Vec<_>>(),
-            )
-        });
-
-        let mut inputs = vec![k, w];
-        for i in [
-            local.prev_seed[7],
-            local.big_sig1.xor3.value,
-            local.ch.value,
-        ] {
-            inputs.push([i[0].into(), i[1].into(), i[2].into(), i[3].into()])
-        }
-
-        AddGadget::<AB::F, 5>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            inputs.try_into().unwrap(),
-            &local.sum_t1,
-        );
-
-        BigSigma0Cols::<AB::F>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            local.prev_seed[0],
-            local.big_sig0.borrow(),
-        );
-
-        MajorCols::<AB::F>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            local.prev_seed[0],
-            local.prev_seed[1],
-            local.prev_seed[2],
-            local.maj.borrow(),
-        );
-        AddGadget::<AB::F, 2>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            [local.big_sig0.xor3.value, local.maj.xor3.value],
-            &local.sum_t2,
-        );
-
-        AddGadget::<AB::F, 2>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            [local.prev_seed[3], local.sum_t1.value],
-            &local.sum_e,
-        );
-        AddGadget::<AB::F, 2>::eval::<AB>(
-            builder,
-            BUS_INDEX,
-            [local.sum_t1.value, local.sum_t2.value],
-            &local.sum_a,
-        );
-
-        for i in 0..U32_LIMBS {
-            builder.assert_eq(local.seed[0][i], local.sum_a.value[i]);
-            builder.assert_eq(local.seed[1][i], local.prev_seed[0][i]);
-            builder.assert_eq(local.seed[2][i], local.prev_seed[1][i]);
-            builder.assert_eq(local.seed[3][i], local.prev_seed[2][i]);
-            builder.assert_eq(local.seed[4][i], local.sum_e.value[i]);
-            builder.assert_eq(local.seed[5][i], local.prev_seed[4][i]);
-            builder.assert_eq(local.seed[6][i], local.prev_seed[5][i]);
-            builder.assert_eq(local.seed[7][i], local.prev_seed[6][i]);
-        }
-
-        for i in 0..8 {
-            AddGadget::<AB::F, 2>::eval::<AB>(
+        for i in 0..NUM_ROUNDS_PER_ROW {
+            // Eval small sigma logic.
+            let add_inputs: [[<AB as AirBuilder>::Expr; 4]; 4] = array::from_fn(|j| {
+                array::from_fn(|k| {
+                    self.round_idx_encoder.flag_with_expr::<AB>(
+                        &local.round_idx,
+                        &(4..16)
+                            .map(|round_idx| {
+                                (
+                                    round_idx,
+                                    [
+                                        local.buf[round_idx*4 + i - 2][k].clone(),
+                                        local.buf[round_idx*4 + i - 7][k].clone(),
+                                        local.buf[round_idx*4 + i - 15][k].clone(),
+                                        local.buf[round_idx*4 + i - 16][k].clone(),
+                                    ][j],
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            });
+            SmallSigma1Cols::<AB::F>::eval::<AB>(
                 builder,
                 BUS_INDEX,
-                [local.seed[i].clone(), local.prev_block_seed[i].clone()],
-                &local.sum_final[i],
+                add_inputs[0].clone(),
+                local.small_sig1[i].borrow(),
             );
 
-            for j in 0..U32_LIMBS {
-                builder.when_first_row().assert_eq(
-                    local.prev_seed[i][j].clone(),
-                    AB::Expr::from_canonical_u8(SHA256_H[i].to_le_bytes()[j]),
-                );
+            SmallSigma0Cols::<AB::F>::eval::<AB>(
+                builder,
+                BUS_INDEX,
+                add_inputs[2].clone(),
+                local.small_sig0[i].borrow(),
+            );
 
-                builder
-                    .when(final_step)
-                    .assert_eq(local.final_hash[i][j], local.sum_final[i].value[j]);
+            let mut inputs = vec![add_inputs[1].clone(), add_inputs[3].clone()];
+            for i in [local.small_sig0[i].xor3.value, local.small_sig1[i].xor3.value] {
+                inputs.push([i[0].into(), i[1].into(), i[2].into(), i[3].into()])
             }
+            AddGadget::<AB::F, 4>::eval::<AB>(
+                builder,
+                BUS_INDEX,
+                inputs.try_into().unwrap(),
+                &local.sum_small_sig[i].borrow(),
+            );
         }
+
+        // // Eval big sigma logic.
+        // BigSigma1Cols::<AB::F>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     local.prev_seed[4],
+        //     local.big_sig1.borrow(),
+        // );
+
+        // ChooseCols::<AB::F>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     local.prev_seed[4],
+        //     local.prev_seed[5],
+        //     local.prev_seed[6],
+        //     local.ch.borrow(),
+        // );
+
+        // let k: [<AB as AirBuilder>::Expr; 4] = array::from_fn(|j| {
+        //     self.round_idx_encoder.flag_with_val::<AB>(
+        //         &local.round_idx,
+        //         &(0..64)
+        //             .map(|round_idx| (round_idx, SHA256_K[round_idx].to_le_bytes()[j] as usize))
+        //             .collect::<Vec<_>>(),
+        //     )
+        // });
+
+        // let w: [<AB as AirBuilder>::Expr; 4] = array::from_fn(|j| {
+        //     self.round_idx_encoder.flag_with_expr::<AB>(
+        //         &local.round_idx,
+        //         &(0..64)
+        //             .map(|round_idx| (round_idx, local.buf[round_idx][j].clone()))
+        //             .collect::<Vec<_>>(),
+        //     )
+        // });
+
+        // let mut inputs = vec![k, w];
+        // for i in [
+        //     local.prev_seed[7],
+        //     local.big_sig1.xor3.value,
+        //     local.ch.value,
+        // ] {
+        //     inputs.push([i[0].into(), i[1].into(), i[2].into(), i[3].into()])
+        // }
+
+        // AddGadget::<AB::F, 5>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     inputs.try_into().unwrap(),
+        //     &local.sum_t1,
+        // );
+
+        // BigSigma0Cols::<AB::F>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     local.prev_seed[0],
+        //     local.big_sig0.borrow(),
+        // );
+
+        // MajorCols::<AB::F>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     local.prev_seed[0],
+        //     local.prev_seed[1],
+        //     local.prev_seed[2],
+        //     local.maj.borrow(),
+        // );
+        // AddGadget::<AB::F, 2>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     [local.big_sig0.xor3.value, local.maj.xor3.value],
+        //     &local.sum_t2,
+        // );
+
+        // AddGadget::<AB::F, 2>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     [local.prev_seed[3], local.sum_t1.value],
+        //     &local.sum_e,
+        // );
+        // AddGadget::<AB::F, 2>::eval::<AB>(
+        //     builder,
+        //     BUS_INDEX,
+        //     [local.sum_t1.value, local.sum_t2.value],
+        //     &local.sum_a,
+        // );
+
+        // for i in 0..U32_LIMBS {
+        //     builder.assert_eq(local.seed[0][i], local.sum_a.value[i]);
+        //     builder.assert_eq(local.seed[1][i], local.prev_seed[0][i]);
+        //     builder.assert_eq(local.seed[2][i], local.prev_seed[1][i]);
+        //     builder.assert_eq(local.seed[3][i], local.prev_seed[2][i]);
+        //     builder.assert_eq(local.seed[4][i], local.sum_e.value[i]);
+        //     builder.assert_eq(local.seed[5][i], local.prev_seed[4][i]);
+        //     builder.assert_eq(local.seed[6][i], local.prev_seed[5][i]);
+        //     builder.assert_eq(local.seed[7][i], local.prev_seed[6][i]);
+        // }
+
+        // for i in 0..8 {
+        //     AddGadget::<AB::F, 2>::eval::<AB>(
+        //         builder,
+        //         BUS_INDEX,
+        //         [local.seed[i].clone(), local.prev_block_seed[i].clone()],
+        //         &local.sum_final[i],
+        //     );
+
+        //     for j in 0..U32_LIMBS {
+        //         builder.when_first_row().assert_eq(
+        //             local.prev_seed[i][j].clone(),
+        //             AB::Expr::from_canonical_u8(SHA256_H[i].to_le_bytes()[j]),
+        //         );
+
+        //         builder
+        //             .when(final_step)
+        //             .assert_eq(local.final_hash[i][j], local.sum_final[i].value[j]);
+        //     }
+        // }
     }
 }
 

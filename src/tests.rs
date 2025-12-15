@@ -5,7 +5,7 @@ pub mod tests {
     use openvm_stark_sdk::{config::{FriParameters, baby_bear_keccak::BabyBearKeccakEngine, setup_tracing}, engine::{StarkEngine, StarkFriEngine}, utils::create_seeded_rng};
 
     use crate::{air::{BUS_INDEX, ShaAir}, chips::byte::ByteLookupChip};
-    const LOG_BLOWUP: usize = 2;
+    const LOG_BLOWUP: usize = 1;
 
     #[test]
     fn test_sha256() {
